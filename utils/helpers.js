@@ -1,5 +1,6 @@
 const { USER_AGENTS } = require('../config/constants');
 const cheerio = require('cheerio');
+const axios = require('axios');
 
 /**
  * Sleep function for adding delays
@@ -439,5 +440,172 @@ module.exports = {
   extractMetadata,
   resolveUrl,
   isHtmlContent,
-  classifyLinkType
+  classifyLinkType,
+  fetchPlatformMetadata,
+  needsPlatformFallback,
+  mergeMetadata
 };
+
+/**
+ * Detect if URL is a YouTube link
+ * @param {string} url
+ * @returns {boolean}
+ */
+function isYouTubeUrl(url) {
+  if (!url) return false;
+  const u = url.toLowerCase();
+  return u.includes('youtube.com') || u.includes('youtu.be');
+}
+
+/**
+ * Detect if URL is a Spotify link
+ * @param {string} url
+ * @returns {boolean}
+ */
+function isSpotifyUrl(url) {
+  if (!url) return false;
+  const u = url.toLowerCase();
+  return u.includes('spotify.com');
+}
+
+/**
+ * Fetch platform-specific metadata via official oEmbed endpoints
+ * Supports YouTube and Spotify.
+ * @param {string} url
+ * @returns {Promise<{title:string|null, description:string|null, images:{logo:string|null, ogImage:string|null, favicon:string|null, appleTouchIcon:string|null}}|null>}
+ */
+async function fetchPlatformMetadata(url) {
+  try {
+    // YouTube oEmbed
+    if (isYouTubeUrl(url)) {
+      const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
+      const { data } = await axios.get(oembedUrl, {
+        timeout: 8000,
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': getRandomUserAgent()
+        }
+      });
+      return {
+        title: data.title || null,
+        description: data.author_name ? `By ${data.author_name}` : null,
+        images: {
+          logo: null,
+          ogImage: data.thumbnail_url || null,
+          favicon: 'https://www.youtube.com/s/desktop/6f1c77b6/img/favicon_32x32.png',
+          appleTouchIcon: null
+        }
+      };
+    }
+
+    // Spotify oEmbed
+    if (isSpotifyUrl(url)) {
+      const oembedUrl = `https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`;
+      const { data } = await axios.get(oembedUrl, {
+        timeout: 8000,
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': getRandomUserAgent()
+        }
+      });
+      return {
+        title: data.title || null,
+        description: data.author_name || null,
+        images: {
+          logo: null,
+          ogImage: data.thumbnail_url || null,
+          favicon: 'https://open.spotifycdn.com/cdn/images/favicon32.8bbb0783.png',
+          appleTouchIcon: null
+        }
+      };
+    }
+  } catch (err) {
+    console.log('Platform metadata fallback failed:', err.message);
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Check if scraped metadata is generic and should be replaced by oEmbed data
+ * @param {string} url
+ * @param {{title:string|null, description:string|null, images:object}} metadata
+ * @returns {boolean}
+ */
+function needsPlatformFallback(url, metadata) {
+  if (!metadata) return true;
+  const title = (metadata.title || '').toLowerCase();
+  const description = (metadata.description || '').toLowerCase();
+
+  if (isYouTubeUrl(url)) {
+    const isGenericTitle = title === '- youtube' || title === 'youtube';
+    const isGenericDesc = description.includes('enjoy the videos and music you love');
+    const missingImage = !metadata.images?.ogImage;
+    return isGenericTitle || isGenericDesc || missingImage;
+  }
+
+  if (isSpotifyUrl(url)) {
+    const isGenericTitle = title.includes('spotify') && title.includes('web player');
+    const missingImage = !metadata.images?.ogImage;
+    return isGenericTitle || missingImage;
+  }
+
+  return false;
+}
+
+/**
+ * Merge base metadata with override from platform-specific sources.
+ * Replaces generic or missing fields; preserves existing meaningful values.
+ * @param {{title:string|null, description:string|null, images:object}} base
+ * @param {{title:string|null, description:string|null, images:object}} override
+ * @param {string} url
+ * @returns {{title:string|null, description:string|null, images:object}}
+ */
+function mergeMetadata(base, override, url = '') {
+  const result = {
+    title: base?.title || null,
+    description: base?.description || null,
+    images: {
+      logo: base?.images?.logo || null,
+      ogImage: base?.images?.ogImage || null,
+      favicon: base?.images?.favicon || null,
+      appleTouchIcon: base?.images?.appleTouchIcon || null
+    }
+  };
+
+  if (!override) return result;
+
+  // If platform is YouTube or Spotify and base title looks generic, override.
+  if (isYouTubeUrl(url)) {
+    const t = (result.title || '').toLowerCase();
+    const isGenericTitle = t === '- youtube' || t === 'youtube';
+    if (isGenericTitle || !result.title) {
+      result.title = override.title ?? result.title;
+    }
+    const d = (result.description || '').toLowerCase();
+    const isGenericDesc = d.includes('enjoy the videos and music you love');
+    if (isGenericDesc || !result.description) {
+      result.description = override.description ?? result.description;
+    }
+  }
+
+  if (isSpotifyUrl(url)) {
+    const t = (result.title || '').toLowerCase();
+    const isGenericTitle = t.includes('spotify') && t.includes('web player');
+    if (isGenericTitle || !result.title) {
+      result.title = override.title ?? result.title;
+    }
+    if (!result.description) {
+      result.description = override.description ?? result.description;
+    }
+  }
+
+  // Fill missing images
+  for (const key of ['ogImage', 'logo', 'favicon', 'appleTouchIcon']) {
+    if (!result.images[key] && override.images?.[key]) {
+      result.images[key] = override.images[key];
+    }
+  }
+
+  return result;
+}

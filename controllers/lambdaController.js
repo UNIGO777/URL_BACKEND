@@ -9,7 +9,10 @@ const {
   extractImages,
   extractMetadata,
   isHtmlContent,
-  classifyLinkType
+  classifyLinkType,
+  fetchPlatformMetadata,
+  needsPlatformFallback,
+  mergeMetadata
 } = require('../utils/helpers');
 
 /**
@@ -65,6 +68,17 @@ class LambdaController {
           title: metadata.title ? '✅' : '❌',
           description: metadata.description ? '✅' : '❌'
         });
+
+        // Platform-aware fallback: use oEmbed when content looks generic/missing
+        if (needsPlatformFallback(url, metadata)) {
+          console.log('🔁 Using platform oEmbed fallback for richer metadata...');
+          const platformMeta = await fetchPlatformMetadata(url);
+          if (platformMeta) {
+            metadata = mergeMetadata(metadata, platformMeta, url);
+          } else {
+            console.log('⚠️  Platform fallback unavailable or failed.');
+          }
+        }
       }
       
       // Classify link type based on URL and extracted content
