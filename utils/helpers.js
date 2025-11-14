@@ -128,131 +128,141 @@ const extractMetadata = (html, baseUrl) => {
       metadata.description = metadata.description.trim();
     }
 
-    // Extract Open Graph and Twitter card images (prefer secure URLs)
-    const ogCandidates = [
-      $('meta[property="og:image:secure_url"]').attr('content'),
-      $('meta[property="og:image:url"]').attr('content'),
-      $('meta[property="og:image"]').attr('content'),
-      $('meta[name="og:image"]').attr('content'),
-      $('meta[property="twitter:image"]').attr('content'),
-      $('meta[name="twitter:image"]').attr('content'),
-      $('meta[property="twitter:image:src"]').attr('content'),
-      $('meta[name="twitter:image:src"]').attr('content')
-    ].filter(Boolean);
-    if (ogCandidates.length > 0) {
-      metadata.images.ogImage = resolveUrl(ogCandidates[0], baseUrl);
-    }
+    const candidates = [];
+    const seen = new Set();
+    const pushCandidate = (u, source, w = 0, h = 0) => {
+      if (!u) return;
+      const abs = resolveUrl(u, baseUrl);
+      if (!abs) return;
+      if (seen.has(abs)) return;
+      seen.add(abs);
+      candidates.push({ url: abs, source, w, h });
+    };
 
-    // JSON-LD Product/Article parsing to find primary image
-    if (!metadata.images.ogImage) {
-      $('script[type="application/ld+json"]').each((_, el) => {
-        if (metadata.images.ogImage) return; // stop when found
-        let txt = $(el).contents().text().trim();
-        if (!txt) return;
+    $('meta[property="og:image"], meta[property="og:image:url"], meta[property="og:image:secure_url"], meta[name="og:image"], meta[property="twitter:image"], meta[name="twitter:image"], meta[property="twitter:image:src"], meta[name="twitter:image:src"]').each((_, el) => {
+      const u = $(el).attr('content');
+      pushCandidate(u, 'meta');
+    });
+
+    $('script[type="application/ld+json"]').each((_, el) => {
+      const txt = $(el).contents().text().trim();
+      if (!txt) return;
+      try {
+        const data = JSON.parse(txt);
+        const scan = (node) => {
+          if (!node || typeof node !== 'object') return;
+          const tryPush = (val) => {
+            if (!val) return;
+            if (typeof val === 'string') pushCandidate(val, 'jsonld');
+            else if (Array.isArray(val)) {
+              for (const i of val) {
+                if (typeof i === 'string') pushCandidate(i, 'jsonld');
+                else if (i && i.url) pushCandidate(i.url, 'jsonld');
+              }
+            } else if (val && val.url) pushCandidate(val.url, 'jsonld');
+          };
+          tryPush(node.image);
+          tryPush(node.thumbnailUrl);
+          tryPush(node.primaryImageOfPage);
+          tryPush(node.logo);
+          tryPush(node.contentUrl);
+          if (Array.isArray(node['@graph'])) {
+            for (const g of node['@graph']) scan(g);
+          }
+          for (const v of Object.values(node)) {
+            if (typeof v === 'object') scan(v);
+          }
+        };
+        if (Array.isArray(data)) {
+          for (const item of data) scan(item);
+        } else {
+          scan(data);
+        }
+      } catch (_) {}
+    });
+
+    $('link[rel="image_src"], link[rel="preload"][as="image"]').each((_, el) => {
+      const href = $(el).attr('href');
+      pushCandidate(href, 'link');
+    });
+
+    $('picture source[srcset], img[srcset]').each((_, el) => {
+      const srcset = ($(el).attr('srcset') || '').split(',');
+      for (const part of srcset) {
+        const m = part.trim().match(/^([^\s]+)\s+(\d+)w/);
+        if (m) pushCandidate(m[1], 'srcset', parseInt(m[2], 10) || 0, 0);
+      }
+    });
+
+    $('img').each((_, el) => {
+      const e = $(el);
+      const attrs = ['src','data-src','data-original','data-zoom-image','data-hires','data-image','data-large_image','data-fullsize','data-old-hires'];
+      for (const a of attrs) {
+        const u = e.attr(a);
+        if (u) pushCandidate(u, 'img');
+      }
+      const dyn = e.attr('data-a-dynamic-image');
+      if (dyn) {
         try {
-          // Some sites include multiple JSON objects or comments; try to parse safely
-          const data = JSON.parse(txt);
-          const candidates = [];
-          const pushImage = (img) => {
-            if (!img) return;
-            if (typeof img === 'string') candidates.push(img);
-            else if (Array.isArray(img)) {
-              for (const i of img) {
-                if (typeof i === 'string') candidates.push(i);
-                else if (i?.url) candidates.push(i.url);
-              }
-            } else if (img?.url) {
-              candidates.push(img.url);
-            }
-          };
-
-          const scan = (node) => {
-            if (!node || typeof node !== 'object') return;
-            pushImage(node.image || node.thumbnailUrl || node.primaryImageOfPage);
-            if (node['@type'] === 'Product' && node.image) pushImage(node.image);
-            if (Array.isArray(node['@graph'])) {
-              for (const g of node['@graph']) scan(g);
-            }
-          };
-
-          if (Array.isArray(data)) {
-            for (const item of data) scan(item);
-          } else {
-            scan(data);
+          const map = JSON.parse(dyn);
+          for (const [u, dims] of Object.entries(map)) {
+            const w = Array.isArray(dims) ? parseInt(dims[0], 10) || 0 : 0;
+            const h = Array.isArray(dims) ? parseInt(dims[1], 10) || 0 : 0;
+            pushCandidate(u, 'img-map', w, h);
           }
-
-          if (candidates.length > 0) {
-            metadata.images.ogImage = resolveUrl(candidates[0], baseUrl);
-          }
-        } catch (_) {
-          // ignore parse errors
-        }
-      });
-    }
-
-    // Amazon-specific fallbacks: landing image and dynamic image map
-    if (!metadata.images.ogImage && /amazon\./i.test(new URL(baseUrl).hostname)) {
-      const landing = $('#landingImage');
-      const imgWrapper = $('#imgTagWrapperId img');
-      const targetImg = landing.length ? landing : imgWrapper.length ? imgWrapper : null;
-      if (targetImg && targetImg.length) {
-        const oldHires = targetImg.attr('data-old-hires');
-        if (oldHires) {
-          metadata.images.ogImage = resolveUrl(oldHires, baseUrl);
-        }
-        if (!metadata.images.ogImage) {
-          const dyn = targetImg.attr('data-a-dynamic-image');
-          if (dyn) {
-            try {
-              const map = JSON.parse(dyn);
-              let bestUrl = null;
-              let bestScore = -1;
-              for (const [url, dims] of Object.entries(map)) {
-                const score = Array.isArray(dims) && dims.length >= 2 ? (dims[0] * dims[1]) : 0;
-                if (score > bestScore) {
-                  bestScore = score;
-                  bestUrl = url;
-                }
-              }
-              if (bestUrl) {
-                metadata.images.ogImage = resolveUrl(bestUrl, baseUrl);
-              }
-            } catch (_) {
-              // ignore
-            }
-          }
-        }
-        if (!metadata.images.ogImage && targetImg.attr('src')) {
-          metadata.images.ogImage = resolveUrl(targetImg.attr('src'), baseUrl);
-        }
+        } catch (_) {}
       }
-    }
+    });
 
-    // Generic fallbacks: preload images and largest srcset candidate
-    if (!metadata.images.ogImage) {
-      const preloadHref = $('link[rel="preload"][as="image"]').attr('href');
-      if (preloadHref) {
-        metadata.images.ogImage = resolveUrl(preloadHref, baseUrl);
-      }
-    }
+    $('video[poster]').each((_, el) => {
+      const u = $(el).attr('poster');
+      pushCandidate(u, 'poster');
+    });
 
-    if (!metadata.images.ogImage) {
-      const imgWithSrcset = $('img[srcset]').first();
-      if (imgWithSrcset.length) {
-        const srcset = imgWithSrcset.attr('srcset') || '';
-        const parts = srcset.split(',').map(s => s.trim());
-        let best = null;
-        let bestW = -1;
-        for (const p of parts) {
-          const m = p.match(/([^\s]+)\s+(\d+)w/);
-          if (m) {
-            const url = m[1];
-            const w = parseInt(m[2], 10);
-            if (w > bestW) { bestW = w; best = url; }
-          }
-        }
-        if (best) metadata.images.ogImage = resolveUrl(best, baseUrl);
+    $('div[style*="background-image"]').each((_, el) => {
+      const style = $(el).attr('style') || '';
+      const m = style.match(/url\((['"]?)([^'"\)]+)\1\)/i);
+      if (m) pushCandidate(m[2], 'background');
+    });
+
+    $('script').each((_, el) => {
+      const t = $(el).html() || '';
+      const re = /(https?:[^"']+\.(?:png|jpg|jpeg|webp|gif))/ig;
+      let m;
+      let cnt = 0;
+      while ((m = re.exec(t)) && cnt < 20) {
+        pushCandidate(m[1], 'script');
+        cnt++;
       }
+    });
+
+    const scoreCandidate = (c) => {
+      let s = 0;
+      const u = c.url.toLowerCase();
+      if (c.source === 'meta') s += 100;
+      if (c.source === 'jsonld') s += 90;
+      if (c.source === 'srcset') s += 70;
+      if (c.source === 'img-map') s += 65;
+      if (c.source === 'img') s += 60;
+      if (c.source === 'poster') s += 50;
+      if (c.source === 'link') s += 45;
+      if (c.source === 'background') s += 40;
+      if (c.source === 'script') s += 30;
+      if (c.w) s += Math.min(c.w, 1600) / 10;
+      if (c.h) s += Math.min(c.h, 1600) / 10;
+      if (u.includes('favicon') || u.includes('sprite')) s -= 80;
+      if (u.includes('logo')) s -= 40;
+      if (u.endsWith('.svg')) s -= 30;
+      const wm = u.match(/[?&](?:w|width)=(\d+)/) || u.match(/(\d{3,})w\b/);
+      if (wm) s += parseInt(wm[1], 10) / 10;
+      const hm = u.match(/[?&](?:h|height)=(\d+)/);
+      if (hm) s += parseInt(hm[1], 10) / 10;
+      return s;
+    };
+
+    if (!metadata.images.ogImage && candidates.length) {
+      candidates.sort((a, b) => scoreCandidate(b) - scoreCandidate(a));
+      metadata.images.ogImage = candidates[0].url;
     }
 
     // Extract logo from common selectors
