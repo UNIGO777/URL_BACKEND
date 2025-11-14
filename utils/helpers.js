@@ -128,11 +128,131 @@ const extractMetadata = (html, baseUrl) => {
       metadata.description = metadata.description.trim();
     }
 
-    // Extract Open Graph image
-    const ogImage = $('meta[property="og:image"]').attr('content') || 
-                   $('meta[name="og:image"]').attr('content');
-    if (ogImage) {
-      metadata.images.ogImage = resolveUrl(ogImage, baseUrl);
+    // Extract Open Graph and Twitter card images (prefer secure URLs)
+    const ogCandidates = [
+      $('meta[property="og:image:secure_url"]').attr('content'),
+      $('meta[property="og:image:url"]').attr('content'),
+      $('meta[property="og:image"]').attr('content'),
+      $('meta[name="og:image"]').attr('content'),
+      $('meta[property="twitter:image"]').attr('content'),
+      $('meta[name="twitter:image"]').attr('content'),
+      $('meta[property="twitter:image:src"]').attr('content'),
+      $('meta[name="twitter:image:src"]').attr('content')
+    ].filter(Boolean);
+    if (ogCandidates.length > 0) {
+      metadata.images.ogImage = resolveUrl(ogCandidates[0], baseUrl);
+    }
+
+    // JSON-LD Product/Article parsing to find primary image
+    if (!metadata.images.ogImage) {
+      $('script[type="application/ld+json"]').each((_, el) => {
+        if (metadata.images.ogImage) return; // stop when found
+        let txt = $(el).contents().text().trim();
+        if (!txt) return;
+        try {
+          // Some sites include multiple JSON objects or comments; try to parse safely
+          const data = JSON.parse(txt);
+          const candidates = [];
+          const pushImage = (img) => {
+            if (!img) return;
+            if (typeof img === 'string') candidates.push(img);
+            else if (Array.isArray(img)) {
+              for (const i of img) {
+                if (typeof i === 'string') candidates.push(i);
+                else if (i?.url) candidates.push(i.url);
+              }
+            } else if (img?.url) {
+              candidates.push(img.url);
+            }
+          };
+
+          const scan = (node) => {
+            if (!node || typeof node !== 'object') return;
+            pushImage(node.image || node.thumbnailUrl || node.primaryImageOfPage);
+            if (node['@type'] === 'Product' && node.image) pushImage(node.image);
+            if (Array.isArray(node['@graph'])) {
+              for (const g of node['@graph']) scan(g);
+            }
+          };
+
+          if (Array.isArray(data)) {
+            for (const item of data) scan(item);
+          } else {
+            scan(data);
+          }
+
+          if (candidates.length > 0) {
+            metadata.images.ogImage = resolveUrl(candidates[0], baseUrl);
+          }
+        } catch (_) {
+          // ignore parse errors
+        }
+      });
+    }
+
+    // Amazon-specific fallbacks: landing image and dynamic image map
+    if (!metadata.images.ogImage && /amazon\./i.test(new URL(baseUrl).hostname)) {
+      const landing = $('#landingImage');
+      const imgWrapper = $('#imgTagWrapperId img');
+      const targetImg = landing.length ? landing : imgWrapper.length ? imgWrapper : null;
+      if (targetImg && targetImg.length) {
+        const oldHires = targetImg.attr('data-old-hires');
+        if (oldHires) {
+          metadata.images.ogImage = resolveUrl(oldHires, baseUrl);
+        }
+        if (!metadata.images.ogImage) {
+          const dyn = targetImg.attr('data-a-dynamic-image');
+          if (dyn) {
+            try {
+              const map = JSON.parse(dyn);
+              let bestUrl = null;
+              let bestScore = -1;
+              for (const [url, dims] of Object.entries(map)) {
+                const score = Array.isArray(dims) && dims.length >= 2 ? (dims[0] * dims[1]) : 0;
+                if (score > bestScore) {
+                  bestScore = score;
+                  bestUrl = url;
+                }
+              }
+              if (bestUrl) {
+                metadata.images.ogImage = resolveUrl(bestUrl, baseUrl);
+              }
+            } catch (_) {
+              // ignore
+            }
+          }
+        }
+        if (!metadata.images.ogImage && targetImg.attr('src')) {
+          metadata.images.ogImage = resolveUrl(targetImg.attr('src'), baseUrl);
+        }
+      }
+    }
+
+    // Generic fallbacks: preload images and largest srcset candidate
+    if (!metadata.images.ogImage) {
+      const preloadHref = $('link[rel="preload"][as="image"]').attr('href');
+      if (preloadHref) {
+        metadata.images.ogImage = resolveUrl(preloadHref, baseUrl);
+      }
+    }
+
+    if (!metadata.images.ogImage) {
+      const imgWithSrcset = $('img[srcset]').first();
+      if (imgWithSrcset.length) {
+        const srcset = imgWithSrcset.attr('srcset') || '';
+        const parts = srcset.split(',').map(s => s.trim());
+        let best = null;
+        let bestW = -1;
+        for (const p of parts) {
+          const m = p.match(/([^\s]+)\s+(\d+)w/);
+          if (m) {
+            const url = m[1];
+            const w = parseInt(m[2], 10);
+            if (w > bestW) { bestW = w; best = url; }
+          }
+        }
+        if (best) metadata.images.ogImage = resolveUrl(best, baseUrl);
+      }
     }
 
     // Extract logo from common selectors
