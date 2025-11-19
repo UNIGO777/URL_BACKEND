@@ -37,8 +37,7 @@ const linkSchema = new mongoose.Schema({
     },
     title: {
         type: String,
-        trim: true,
-        maxlength: [500, 'Title cannot exceed 500 characters']
+        trim: true
     },
     description: {
         type: String,
