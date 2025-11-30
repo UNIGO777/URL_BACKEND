@@ -42,6 +42,7 @@ const otpSchema = new mongoose.Schema({
 otpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 // Index for faster queries
+
 otpSchema.index({ identifier: 1, type: 1 });
 
 // Static method to generate OTP

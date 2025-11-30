@@ -7,6 +7,7 @@ class GeminiController {
   async generate(req, res) {
     try {
       const { prompt } = req.body;
+      console.log("ajsdh")
       if (!prompt) {
         return res.status(400).json({ success: false, message: 'Missing required parameter: prompt' });
       }
