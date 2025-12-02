@@ -38,7 +38,7 @@ class SearchController {
                     { url: { $regex: toRegex(searchQuery) } },
                     { originalUrl: { $regex: toRegex(searchQuery) } },
                     { 'metadata.domain': { $regex: toRegex(searchQuery) } },
-                    { tags: { $regex: toRegex(searchQuery) } },
+                    { tags: { $elemMatch: { $regex: toRegex(searchQuery) } } },
                     { notes: { $regex: toRegex(searchQuery) } }
                 ];
             }
@@ -53,7 +53,7 @@ class SearchController {
                     .map(s => ({ linkType: s }));
                 const tagConds = parts
                     .filter(s => !knownTypes.has(s.toLowerCase()))
-                    .map(s => ({ tags: { $regex: toRegex(s) } }));
+                    .map(s => ({ tags: { $elemMatch: { $regex: toRegex(s) } } }));
 
                 const tagOrBlock = { $or: [...typeConds, ...tagConds] };
 
@@ -154,7 +154,7 @@ class SearchController {
                             { 'linkDetails.url': { $regex: toRegex(searchQuery) } },
                             { 'linkDetails.originalUrl': { $regex: toRegex(searchQuery) } },
                             { 'linkDetails.metadata.domain': { $regex: toRegex(searchQuery) } },
-                            { 'linkDetails.tags': { $regex: toRegex(searchQuery) } },
+                            { 'linkDetails.tags': { $elemMatch: { $regex: toRegex(searchQuery) } } },
                             { 'linkDetails.notes': { $regex: toRegex(searchQuery) } }
                         ]
                     }
@@ -293,7 +293,7 @@ class SearchController {
                 const searchConditions = {
                     userId: userId,
                     isActive: true,
-                    tags: { $regex: toRegex(tagQuery) }
+                    tags: { $elemMatch: { $regex: toRegex(tagQuery) } }
                 };
 
                 const [links, totalCount] = await Promise.all([
@@ -339,7 +339,7 @@ class SearchController {
                         $match: {
                             'linkDetails.isActive': true,
                             'linkDetails.userId': userId,
-                            'linkDetails.tags': { $regex: toRegex(tagQuery) }
+                            'linkDetails.tags': { $elemMatch: { $regex: toRegex(tagQuery) } }
                         }
                     },
                     { $sort: { favoritedAt: -1 } },
