@@ -178,6 +178,7 @@ linkSchema.index({ url: 1 });
 linkSchema.index({ linkType: 1 });
 linkSchema.index({ userId: 1 });
 linkSchema.index({ 'metadata.domain': 1 });
+linkSchema.index({ tags: 1 });
 linkSchema.index({ createdAt: -1 });
 linkSchema.index({ 'analytics.lastAccessed': -1 });
 linkSchema.index({ userId: 1, url: 1 }, { unique: true, partialFilterExpression: { isActive: true } });

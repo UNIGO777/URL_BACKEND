@@ -1,6 +1,9 @@
 const Link = require('../models/Links');
 const Fav = require('../models/Favs');
 
+const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const toRegex = (s) => new RegExp(escapeRegExp(String(s)), 'i');
+
 class SearchController {
     /**
      * Search through user's links
@@ -8,32 +11,50 @@ class SearchController {
      */
     static async searchLinks(req, res) {
         try {
-            const { query, page = 1, limit = 10 } = req.query;
+            const { page = 1, limit = 10 } = req.query;
             const userId = req.user.id;
+            const rawQuery = String(req.query?.query ?? req.query?.q ?? '').trim();
+            const rawTag = String(req.query?.tag ?? req.query?.tags ?? '').trim();
 
-            if (!query || query.trim() === '') {
+            if (!rawQuery && !rawTag) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Search query is required'
+                    message: 'Provide a search query or a tag'
                 });
             }
 
-            const searchQuery = query.trim();
+            const searchQuery = rawQuery;
             const skip = (parseInt(page) - 1) * parseInt(limit);
 
-            // Create search conditions - only for the authenticated user's links
+            // Base conditions - only for the authenticated user's links
             const searchConditions = {
-                userId: userId, // Ensure only user's own links are searched
-                isActive: true,
-                $or: [
-                    { title: { $regex: searchQuery, $options: 'i' } },
-                    { description: { $regex: searchQuery, $options: 'i' } },
-                    { url: { $regex: searchQuery, $options: 'i' } },
-                    { 'metadata.domain': { $regex: searchQuery, $options: 'i' } },
-                    { tags: { $in: [new RegExp(searchQuery, 'i')] } },
-                    { notes: { $regex: searchQuery, $options: 'i' } }
-                ]
+                userId: userId,
+                isActive: true
             };
+            if (searchQuery.length > 0) {
+                searchConditions.$or = [
+                    { title: { $regex: toRegex(searchQuery) } },
+                    { description: { $regex: toRegex(searchQuery) } },
+                    { url: { $regex: toRegex(searchQuery) } },
+                    { originalUrl: { $regex: toRegex(searchQuery) } },
+                    { 'metadata.domain': { $regex: toRegex(searchQuery) } },
+                    { tags: { $in: [toRegex(searchQuery)] } },
+                    { notes: { $regex: toRegex(searchQuery) } }
+                ];
+            }
+
+            // Optional filter: treat 'tag' as either linkType or a tag keyword
+            if (rawTag && rawTag.length > 0) {
+                const tagLower = rawTag.toLowerCase();
+                const knownTypes = new Set(['social', 'product', 'news', 'video', 'portfolio', 'blog', 'education', 'forum', 'other']);
+                if (knownTypes.has(tagLower)) {
+                    searchConditions.linkType = tagLower;
+                } else {
+                    const tagList = rawTag.split(',').map(t => t.trim()).filter(t => t.length > 0);
+                    const tagRegexes = tagList.map(t => toRegex(t));
+                    searchConditions.tags = { $in: tagRegexes };
+                }
+            }
 
             // Execute search with pagination
             const [links, totalCount] = await Promise.all([
@@ -59,7 +80,7 @@ class SearchController {
                         hasPrevPage: parseInt(page) > 1
                     }
                 },
-                message: `Found ${totalCount} links matching "${searchQuery}"`
+                message: `Found ${totalCount} links matching "${searchQuery}"${rawTag ? ` with filter '${rawTag}'` : ''}`
             });
 
         } catch (error) {
@@ -116,12 +137,13 @@ class SearchController {
                         'linkDetails.isActive': true,
                         'linkDetails.userId': userId, // Double ensure only user's own links
                         $or: [
-                            { 'linkDetails.title': { $regex: searchQuery, $options: 'i' } },
-                            { 'linkDetails.description': { $regex: searchQuery, $options: 'i' } },
-                            { 'linkDetails.url': { $regex: searchQuery, $options: 'i' } },
-                            { 'linkDetails.metadata.domain': { $regex: searchQuery, $options: 'i' } },
-                            { 'linkDetails.tags': { $in: [new RegExp(searchQuery, 'i')] } },
-                            { 'linkDetails.notes': { $regex: searchQuery, $options: 'i' } }
+                            { 'linkDetails.title': { $regex: toRegex(searchQuery) } },
+                            { 'linkDetails.description': { $regex: toRegex(searchQuery) } },
+                            { 'linkDetails.url': { $regex: toRegex(searchQuery) } },
+                            { 'linkDetails.originalUrl': { $regex: toRegex(searchQuery) } },
+                            { 'linkDetails.metadata.domain': { $regex: toRegex(searchQuery) } },
+                            { 'linkDetails.tags': { $in: [toRegex(searchQuery)] } },
+                            { 'linkDetails.notes': { $regex: toRegex(searchQuery) } }
                         ]
                     }
                 },
@@ -259,7 +281,7 @@ class SearchController {
                 const searchConditions = {
                     userId: userId,
                     isActive: true,
-                    tags: { $in: [new RegExp(tagQuery, 'i')] }
+                    tags: { $in: [toRegex(tagQuery)] }
                 };
 
                 const [links, totalCount] = await Promise.all([
@@ -305,7 +327,7 @@ class SearchController {
                         $match: {
                             'linkDetails.isActive': true,
                             'linkDetails.userId': userId,
-                            'linkDetails.tags': { $in: [new RegExp(tagQuery, 'i')] }
+                            'linkDetails.tags': { $in: [toRegex(tagQuery)] }
                         }
                     },
                     { $sort: { favoritedAt: -1 } },
@@ -339,7 +361,7 @@ class SearchController {
                         $match: {
                             'linkDetails.isActive': true,
                             'linkDetails.userId': userId,
-                            'linkDetails.tags': { $in: [new RegExp(tagQuery, 'i')] }
+                            'linkDetails.tags': { $in: [toRegex(tagQuery)] }
                         }
                     },
                     { $count: 'total' }
