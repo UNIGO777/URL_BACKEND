@@ -30,6 +30,7 @@ class SearchController {
 
             if (q) {
                 const rx = toRegex(q);
+                const qLower = q.toLowerCase();
                 andConds.push({
                     $or: [
                         { title: { $regex: rx } },
@@ -38,7 +39,9 @@ class SearchController {
                         { originalUrl: { $regex: rx } },
                         { 'metadata.domain': { $regex: rx } },
                         { notes: { $regex: rx } },
-                        { tags: { $regex: rx } }
+                        { tags: { $regex: rx } },
+                        { tags: { $elemMatch: { $regex: rx } } },
+                        { tagsNormalized: { $in: [qLower] } }
                     ]
                 });
             }
@@ -48,7 +51,11 @@ class SearchController {
             }
 
             if (tagParts.length > 0) {
-                const tagOr = tagParts.map(t => ({ tags: { $regex: toRegex(t) } }));
+                const tagOr = tagParts.map(t => ({ $or: [
+                    { tagsNormalized: { $in: [t.toLowerCase()] } },
+                    { tags: { $regex: toRegex(t) } },
+                    { tags: { $elemMatch: { $regex: toRegex(t) } } }
+                ] }));
                 andConds.push({ $or: tagOr });
             }
 
@@ -111,6 +118,7 @@ class SearchController {
             }
 
             const rx = q ? toRegex(q) : null;
+            const qLower = q ? q.toLowerCase() : null;
             const skip = (parseInt(page) - 1) * parseInt(limit);
 
             const favoritesAggregation = [
@@ -128,14 +136,20 @@ class SearchController {
                             { 'linkDetails.originalUrl': { $regex: rx } },
                             { 'linkDetails.metadata.domain': { $regex: rx } },
                             { 'linkDetails.notes': { $regex: rx } },
-                            { 'linkDetails.tags': { $regex: rx } }
+                            { 'linkDetails.tags': { $regex: rx } },
+                            { 'linkDetails.tags': { $elemMatch: { $regex: rx } } },
+                            ...(qLower ? [{ 'linkDetails.tagsNormalized': { $in: [qLower] } }] : [])
                         ]});
                     }
                     if (type) {
                         andConds.push({ 'linkDetails.linkType': type });
                     }
                     if (tagParts.length > 0) {
-                        const tagOr = tagParts.map(t => ({ 'linkDetails.tags': { $regex: toRegex(t) } }));
+                        const tagOr = tagParts.map(t => ({ $or: [
+                            { 'linkDetails.tagsNormalized': { $in: [t.toLowerCase()] } },
+                            { 'linkDetails.tags': { $regex: toRegex(t) } },
+                            { 'linkDetails.tags': { $elemMatch: { $regex: toRegex(t) } } }
+                        ] }));
                         andConds.push({ $or: tagOr });
                     }
                     return andConds.length ? { $and: andConds } : {};
@@ -246,20 +260,25 @@ class SearchController {
             const skip = (parseInt(page) - 1) * parseInt(limit);
 
             if (type === 'links') {
-                // Search in user's links by tag
+                const tagLower = tagQuery.toLowerCase();
                 const searchConditions = {
                     userId: userId,
                     isActive: true,
-                    tags: { $elemMatch: { $regex: toRegex(tagQuery) } }
                 };
+                const tagMatchOr = { $or: [
+                    { tagsNormalized: { $in: [tagLower] } },
+                    { tags: { $elemMatch: { $regex: toRegex(tagQuery) } } },
+                    { tags: { $regex: toRegex(tagQuery) } }
+                ] };
+                const finalCond = { $and: [searchConditions, tagMatchOr] };
 
                 const [links, totalCount] = await Promise.all([
-                    Link.find(searchConditions)
+                    Link.find(finalCond)
                         .sort({ createdAt: -1 })
                         .skip(skip)
                         .limit(parseInt(limit))
                         .lean(),
-                    Link.countDocuments(searchConditions)
+                    Link.countDocuments(finalCond)
                 ]);
 
                 const totalPages = Math.ceil(totalCount / parseInt(limit));
@@ -296,7 +315,11 @@ class SearchController {
                         $match: {
                             'linkDetails.isActive': true,
                             'linkDetails.userId': userId,
-                            'linkDetails.tags': { $elemMatch: { $regex: toRegex(tagQuery) } }
+                            $or: [
+                                { 'linkDetails.tagsNormalized': { $in: [tagLower] } },
+                                { 'linkDetails.tags': { $elemMatch: { $regex: toRegex(tagQuery) } } },
+                                { 'linkDetails.tags': { $regex: toRegex(tagQuery) } }
+                            ]
                         }
                     },
                     { $sort: { favoritedAt: -1 } },
@@ -330,7 +353,11 @@ class SearchController {
                         $match: {
                             'linkDetails.isActive': true,
                             'linkDetails.userId': userId,
-                            'linkDetails.tags': { $elemMatch: { $regex: toRegex(tagQuery) } }
+                            $or: [
+                                { 'linkDetails.tagsNormalized': { $in: [tagLower] } },
+                                { 'linkDetails.tags': { $elemMatch: { $regex: toRegex(tagQuery) } } },
+                                { 'linkDetails.tags': { $regex: toRegex(tagQuery) } }
+                            ]
                         }
                     },
                     { $count: 'total' }

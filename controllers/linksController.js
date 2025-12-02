@@ -67,6 +67,7 @@ class LinksController {
         images,
         metadata,
         tags: Array.from(new Set(tags.map(tag => tag.trim()))).filter(tag => tag.length > 0),
+        tagsNormalized: Array.from(new Set(tags.map(tag => tag.trim().toLowerCase()))).filter(tag => tag.length > 0),
         notes: notes?.trim()
       };
 
@@ -282,6 +283,7 @@ class LinksController {
       // Clean tags array
       if (updateData.tags) {
         updateData.tags = Array.from(new Set(updateData.tags.map(tag => tag.trim()))).filter(tag => tag.length > 0);
+        updateData.tagsNormalized = Array.from(new Set(updateData.tags.map(tag => tag.toLowerCase()))).filter(tag => tag.length > 0);
       }
 
       if (updateData.url) {

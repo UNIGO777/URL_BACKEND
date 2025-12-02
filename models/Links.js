@@ -154,6 +154,11 @@ const linkSchema = new mongoose.Schema({
         trim: true,
         maxlength: [50, 'Tag cannot exceed 50 characters']
     }],
+    tagsNormalized: [{
+        type: String,
+        trim: true,
+        maxlength: [50, 'Tag cannot exceed 50 characters']
+    }],
     isFavorite: {
         type: Boolean,
         default: false
@@ -179,6 +184,7 @@ linkSchema.index({ linkType: 1 });
 linkSchema.index({ userId: 1 });
 linkSchema.index({ 'metadata.domain': 1 });
 linkSchema.index({ tags: 1 });
+linkSchema.index({ tagsNormalized: 1 });
 linkSchema.index({ createdAt: -1 });
 linkSchema.index({ 'analytics.lastAccessed': -1 });
 linkSchema.index({ userId: 1, url: 1 }, { unique: true, partialFilterExpression: { isActive: true } });
@@ -263,6 +269,14 @@ linkSchema.pre('save', function (next) {
 linkSchema.pre('save', function (next) {
     if (this.isNew) {
         this.analytics.firstAccessed = new Date();
+    }
+    next();
+});
+
+linkSchema.pre('save', function (next) {
+    if (Array.isArray(this.tags)) {
+        const norm = Array.from(new Set(this.tags.map(t => String(t).trim().toLowerCase()).filter(t => t.length > 0)));
+        this.tagsNormalized = norm;
     }
     next();
 });
