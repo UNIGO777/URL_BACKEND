@@ -13,62 +13,47 @@ class SearchController {
         try {
             const { page = 1, limit = 10 } = req.query;
             const userId = req.user.id;
-            const rawQuery = String(req.query?.query ?? req.query?.q ?? '').trim();
-            const rawTag = String(req.query?.tag ?? req.query?.tags ?? '').trim();
+            const q = String(req.query?.q ?? req.query?.query ?? '').trim();
+            const tagsParam = String(req.query?.tags ?? req.query?.tag ?? '').trim();
+            const typeParam = String(req.query?.type ?? '').trim();
 
-            if (!rawQuery && !rawTag) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Provide a search query or a tag'
+            const knownTypes = new Set(['social', 'product', 'news', 'video', 'portfolio', 'blog', 'education', 'forum', 'other']);
+            const tagParts = tagsParam ? tagsParam.split(',').map(s => s.trim()).filter(Boolean) : [];
+            const type = typeParam ? typeParam.toLowerCase() : (knownTypes.has(tagsParam.toLowerCase()) ? tagsParam.toLowerCase() : '');
+
+            if (!q && !type && tagParts.length === 0) {
+                return res.status(400).json({ success: false, message: 'Provide a search query, type, or tags' });
+            }
+
+            const skip = (parseInt(page) - 1) * parseInt(limit);
+            const andConds = [ { userId, isActive: true } ];
+
+            if (q) {
+                const rx = toRegex(q);
+                andConds.push({
+                    $or: [
+                        { title: { $regex: rx } },
+                        { description: { $regex: rx } },
+                        { url: { $regex: rx } },
+                        { originalUrl: { $regex: rx } },
+                        { 'metadata.domain': { $regex: rx } },
+                        { notes: { $regex: rx } },
+                        { tags: { $regex: rx } }
+                    ]
                 });
             }
 
-            const searchQuery = rawQuery;
-            const skip = (parseInt(page) - 1) * parseInt(limit);
-
-            // Base conditions - only for the authenticated user's links
-            const searchConditions = {
-                userId: userId,
-                isActive: true
-            };
-            if (searchQuery.length > 0) {
-                searchConditions.$or = [
-                    { title: { $regex: toRegex(searchQuery) } },
-                    { description: { $regex: toRegex(searchQuery) } },
-                    { url: { $regex: toRegex(searchQuery) } },
-                    { originalUrl: { $regex: toRegex(searchQuery) } },
-                    { 'metadata.domain': { $regex: toRegex(searchQuery) } },
-                    { tags: { $elemMatch: { $regex: toRegex(searchQuery) } } },
-                    { notes: { $regex: toRegex(searchQuery) } }
-                ];
+            if (type) {
+                andConds.push({ linkType: type });
             }
 
-            // Optional filter: tag keywords and/or link types, combined with OR
-            if (rawTag && rawTag.length > 0) {
-                const knownTypes = new Set(['social', 'product', 'news', 'video', 'portfolio', 'blog', 'education', 'forum', 'other']);
-                const parts = rawTag.split(',').map(s => s.trim()).filter(s => s.length > 0);
-                const typeConds = parts
-                    .map(s => s.toLowerCase())
-                    .filter(s => knownTypes.has(s))
-                    .map(s => ({ linkType: s }));
-                const tagConds = parts
-                    .filter(s => !knownTypes.has(s.toLowerCase()))
-                    .map(s => ({ tags: { $elemMatch: { $regex: toRegex(s) } } }));
-
-                const tagOrBlock = { $or: [...typeConds, ...tagConds] };
-
-                if (searchConditions.$or && (typeConds.length > 0 || tagConds.length > 0)) {
-                    searchConditions.$and = [
-                        { $or: searchConditions.$or },
-                        tagOrBlock
-                    ];
-                    delete searchConditions.$or;
-                } else if (typeConds.length > 0 || tagConds.length > 0) {
-                    searchConditions.$or = tagOrBlock.$or;
-                }
+            if (tagParts.length > 0) {
+                const tagOr = tagParts.map(t => ({ tags: { $regex: toRegex(t) } }));
+                andConds.push({ $or: tagOr });
             }
 
-            // Execute search with pagination
+            const searchConditions = andConds.length === 1 ? andConds[0] : { $and: andConds };
+
             const [links, totalCount] = await Promise.all([
                 Link.find(searchConditions)
                     .sort({ createdAt: -1 })
@@ -92,9 +77,9 @@ class SearchController {
                         hasPrevPage: parseInt(page) > 1
                     }
                 },
-                message: `Found ${totalCount} links matching "${searchQuery}"${rawTag ? ` with filter '${rawTag}'` : ''}`
+                message: `Found ${totalCount} links${q ? ` for "${q}"` : ''}${type ? ` in '${type}'` : ''}${tagParts.length ? ` with tags '${tagParts.join(',')}'` : ''}`
             });
-
+        
         } catch (error) {
             console.error('Search links error:', error);
             res.status(500).json({
@@ -111,85 +96,61 @@ class SearchController {
      */
     static async searchFavorites(req, res) {
         try {
-            const { query, page = 1, limit = 10 } = req.query;
+            const { page = 1, limit = 10 } = req.query;
             const userId = req.user.id;
+            const q = String(req.query?.q ?? req.query?.query ?? '').trim();
+            const tagsParam = String(req.query?.tags ?? req.query?.tag ?? '').trim();
+            const typeParam = String(req.query?.type ?? '').trim();
 
-            if (!query || query.trim() === '') {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Search query is required'
-                });
+            const knownTypes = new Set(['social', 'product', 'news', 'video', 'portfolio', 'blog', 'education', 'forum', 'other']);
+            const tagParts = tagsParam ? tagsParam.split(',').map(s => s.trim()).filter(Boolean) : [];
+            const type = typeParam ? typeParam.toLowerCase() : (knownTypes.has(tagsParam.toLowerCase()) ? tagsParam.toLowerCase() : '');
+
+            if (!q && !type && tagParts.length === 0) {
+                return res.status(400).json({ success: false, message: 'Provide a search query, type, or tags' });
             }
 
-            const searchQuery = query.trim();
+            const rx = q ? toRegex(q) : null;
             const skip = (parseInt(page) - 1) * parseInt(limit);
 
-            // First, find user's favorites and populate the link details
             const favoritesAggregation = [
-                // Match only user's favorites
-                {
-                    $match: { userId: userId }
-                },
-                // Lookup the link details
-                {
-                    $lookup: {
-                        from: 'links',
-                        localField: 'linkId',
-                        foreignField: '_id',
-                        as: 'linkDetails'
+                { $match: { userId: userId } },
+                { $lookup: { from: 'links', localField: 'linkId', foreignField: '_id', as: 'linkDetails' } },
+                { $unwind: '$linkDetails' },
+                { $match: { 'linkDetails.isActive': true, 'linkDetails.userId': userId } },
+                { $match: (function() {
+                    const andConds = [];
+                    if (rx) {
+                        andConds.push({ $or: [
+                            { 'linkDetails.title': { $regex: rx } },
+                            { 'linkDetails.description': { $regex: rx } },
+                            { 'linkDetails.url': { $regex: rx } },
+                            { 'linkDetails.originalUrl': { $regex: rx } },
+                            { 'linkDetails.metadata.domain': { $regex: rx } },
+                            { 'linkDetails.notes': { $regex: rx } },
+                            { 'linkDetails.tags': { $regex: rx } }
+                        ]});
                     }
-                },
-                // Unwind the link details
-                {
-                    $unwind: '$linkDetails'
-                },
-                // Filter only active links and apply search conditions
-                {
-                    $match: {
-                        'linkDetails.isActive': true,
-                        'linkDetails.userId': userId, // Double ensure only user's own links
-                        $or: [
-                            { 'linkDetails.title': { $regex: toRegex(searchQuery) } },
-                            { 'linkDetails.description': { $regex: toRegex(searchQuery) } },
-                            { 'linkDetails.url': { $regex: toRegex(searchQuery) } },
-                            { 'linkDetails.originalUrl': { $regex: toRegex(searchQuery) } },
-                            { 'linkDetails.metadata.domain': { $regex: toRegex(searchQuery) } },
-                            { 'linkDetails.tags': { $elemMatch: { $regex: toRegex(searchQuery) } } },
-                            { 'linkDetails.notes': { $regex: toRegex(searchQuery) } }
-                        ]
+                    if (type) {
+                        andConds.push({ 'linkDetails.linkType': type });
                     }
-                },
-                // Sort by favorite date (most recent first)
-                {
-                    $sort: { favoritedAt: -1 }
-                }
+                    if (tagParts.length > 0) {
+                        const tagOr = tagParts.map(t => ({ 'linkDetails.tags': { $regex: toRegex(t) } }));
+                        andConds.push({ $or: tagOr });
+                    }
+                    return andConds.length ? { $and: andConds } : {};
+                })() },
+                { $sort: { favoritedAt: -1 } }
             ];
 
-            // Get total count
-            const totalCountResult = await Fav.aggregate([
-                ...favoritesAggregation,
-                { $count: 'total' }
-            ]);
-
+            const totalCountResult = await Fav.aggregate([ ...favoritesAggregation, { $count: 'total' } ]);
             const totalCount = totalCountResult.length > 0 ? totalCountResult[0].total : 0;
 
-            // Get paginated results
             const favorites = await Fav.aggregate([
                 ...favoritesAggregation,
                 { $skip: skip },
                 { $limit: parseInt(limit) },
-                // Project the final structure
-                {
-                    $project: {
-                        _id: 1,
-                        userId: 1,
-                        linkId: 1,
-                        favoritedAt: 1,
-                        createdAt: 1,
-                        updatedAt: 1,
-                        link: '$linkDetails'
-                    }
-                }
+                { $project: { _id: 1, userId: 1, linkId: 1, favoritedAt: 1, createdAt: 1, updatedAt: 1, link: '$linkDetails' } }
             ]);
 
             const totalPages = Math.ceil(totalCount / parseInt(limit));
@@ -206,16 +167,12 @@ class SearchController {
                         hasPrevPage: parseInt(page) > 1
                     }
                 },
-                message: `Found ${totalCount} favorite links matching "${searchQuery}"`
+                message: `Found ${totalCount} favorites${q ? ` for "${q}"` : ''}${type ? ` in '${type}'` : ''}${tagParts.length ? ` with tags '${tagParts.join(',')}'` : ''}`
             });
 
         } catch (error) {
             console.error('Search favorites error:', error);
-            res.status(500).json({
-                success: false,
-                message: 'Failed to search favorites',
-                error: process.env.NODE_ENV === 'development' ? error.message : undefined
-            });
+            res.status(500).json({ success: false, message: 'Failed to search favorites', error: process.env.NODE_ENV === 'development' ? error.message : undefined });
         }
     }
 
@@ -373,7 +330,7 @@ class SearchController {
                         $match: {
                             'linkDetails.isActive': true,
                             'linkDetails.userId': userId,
-                            'linkDetails.tags': { $in: [toRegex(tagQuery)] }
+                            'linkDetails.tags': { $elemMatch: { $regex: toRegex(tagQuery) } }
                         }
                     },
                     { $count: 'total' }
