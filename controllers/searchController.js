@@ -38,21 +38,33 @@ class SearchController {
                     { url: { $regex: toRegex(searchQuery) } },
                     { originalUrl: { $regex: toRegex(searchQuery) } },
                     { 'metadata.domain': { $regex: toRegex(searchQuery) } },
-                    { tags: { $in: [toRegex(searchQuery)] } },
+                    { tags: { $regex: toRegex(searchQuery) } },
                     { notes: { $regex: toRegex(searchQuery) } }
                 ];
             }
 
-            // Optional filter: treat 'tag' as either linkType or a tag keyword
+            // Optional filter: tag keywords and/or link types, combined with OR
             if (rawTag && rawTag.length > 0) {
-                const tagLower = rawTag.toLowerCase();
                 const knownTypes = new Set(['social', 'product', 'news', 'video', 'portfolio', 'blog', 'education', 'forum', 'other']);
-                if (knownTypes.has(tagLower)) {
-                    searchConditions.linkType = tagLower;
-                } else {
-                    const tagList = rawTag.split(',').map(t => t.trim()).filter(t => t.length > 0);
-                    const tagRegexes = tagList.map(t => toRegex(t));
-                    searchConditions.tags = { $in: tagRegexes };
+                const parts = rawTag.split(',').map(s => s.trim()).filter(s => s.length > 0);
+                const typeConds = parts
+                    .map(s => s.toLowerCase())
+                    .filter(s => knownTypes.has(s))
+                    .map(s => ({ linkType: s }));
+                const tagConds = parts
+                    .filter(s => !knownTypes.has(s.toLowerCase()))
+                    .map(s => ({ tags: { $regex: toRegex(s) } }));
+
+                const tagOrBlock = { $or: [...typeConds, ...tagConds] };
+
+                if (searchConditions.$or && (typeConds.length > 0 || tagConds.length > 0)) {
+                    searchConditions.$and = [
+                        { $or: searchConditions.$or },
+                        tagOrBlock
+                    ];
+                    delete searchConditions.$or;
+                } else if (typeConds.length > 0 || tagConds.length > 0) {
+                    searchConditions.$or = tagOrBlock.$or;
                 }
             }
 
@@ -142,7 +154,7 @@ class SearchController {
                             { 'linkDetails.url': { $regex: toRegex(searchQuery) } },
                             { 'linkDetails.originalUrl': { $regex: toRegex(searchQuery) } },
                             { 'linkDetails.metadata.domain': { $regex: toRegex(searchQuery) } },
-                            { 'linkDetails.tags': { $in: [toRegex(searchQuery)] } },
+                            { 'linkDetails.tags': { $regex: toRegex(searchQuery) } },
                             { 'linkDetails.notes': { $regex: toRegex(searchQuery) } }
                         ]
                     }
@@ -281,7 +293,7 @@ class SearchController {
                 const searchConditions = {
                     userId: userId,
                     isActive: true,
-                    tags: { $in: [toRegex(tagQuery)] }
+                    tags: { $regex: toRegex(tagQuery) }
                 };
 
                 const [links, totalCount] = await Promise.all([
@@ -327,7 +339,7 @@ class SearchController {
                         $match: {
                             'linkDetails.isActive': true,
                             'linkDetails.userId': userId,
-                            'linkDetails.tags': { $in: [toRegex(tagQuery)] }
+                            'linkDetails.tags': { $regex: toRegex(tagQuery) }
                         }
                     },
                     { $sort: { favoritedAt: -1 } },
