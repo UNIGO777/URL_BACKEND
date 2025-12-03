@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const Links = require('../models/Links');
 const Favs = require('../models/Favs');
+const LinkTag = require('../models/LinkTag');
 
 const sanitizeUser = (user) => {
   if (!user) return null;
@@ -228,7 +229,8 @@ const deleteAccount = async (req, res) => {
 
     await Promise.all([
       Links.deleteMany({ userId }),
-      Favs.deleteMany({ userId })
+      Favs.deleteMany({ userId }),
+      LinkTag.deleteMany({ userId })
     ]);
 
     await User.findByIdAndDelete(userId);

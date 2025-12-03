@@ -2,6 +2,7 @@ const Link = require('../models/Links');
 const { normalizeUrl } = require('../utils/url');
 const mongoose = require('mongoose');
 const Fav = require('../models/Favs');
+const LinkTag = require('../models/LinkTag');
 
 /**
  * Links Controller - Handle all link CRUD operations
@@ -101,6 +102,19 @@ class LinksController {
             console.error('❌ Error creating favorite record:', err.message);
           }
         }
+      }
+
+      try {
+        const tagDocs = (Array.isArray(savedLink.tagsNormalized) ? savedLink.tagsNormalized : []).map(t => ({
+          userId,
+          linkId: savedLink._id,
+          tagName: String(t)
+        }));
+        if (tagDocs.length > 0) {
+          await LinkTag.insertMany(tagDocs, { ordered: false });
+        }
+      } catch (e) {
+        // ignore duplicate insert errors
       }
 
       console.log('✅ Link created successfully:', savedLink._id);
@@ -305,6 +319,18 @@ class LinksController {
 
       console.log('✅ Link updated successfully:', updatedLink._id);
 
+      try {
+        await LinkTag.deleteMany({ userId, linkId: updatedLink._id });
+        const tagDocs = (Array.isArray(updatedLink.tagsNormalized) ? updatedLink.tagsNormalized : []).map(t => ({
+          userId,
+          linkId: updatedLink._id,
+          tagName: String(t)
+        }));
+        if (tagDocs.length > 0) {
+          await LinkTag.insertMany(tagDocs, { ordered: false });
+        }
+      } catch (e) {}
+
       res.json({
         success: true,
         message: 'Link updated successfully',
@@ -360,6 +386,10 @@ class LinksController {
       }
 
       console.log('✅ Link deleted successfully:', deletedLink._id);
+
+      try {
+        await LinkTag.deleteMany({ userId, linkId: deletedLink._id });
+      } catch (e) {}
 
       res.json({
         success: true,

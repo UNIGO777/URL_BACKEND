@@ -1,5 +1,6 @@
 const Link = require('../models/Links');
 const Fav = require('../models/Favs');
+const LinkTag = require('../models/LinkTag');
 
 const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const toRegex = (s) => new RegExp(escapeRegExp(String(s)), 'i');
@@ -27,12 +28,17 @@ class SearchController {
 
             const skip = (parseInt(page) - 1) * parseInt(limit);
             const andConds = [ { userId, isActive: true } ];
+            let tagLinkIds = [];
 
             if (q) {
                 const rx = toRegex(q);
                 const qLower = q.toLowerCase();
+                try {
+                    tagLinkIds = await LinkTag.find({ userId, tagName: qLower }).distinct('linkId');
+                } catch (e) {}
                 andConds.push({
                     $or: [
+                        ...(tagLinkIds.length ? [{ _id: { $in: tagLinkIds } }] : []),
                         { title: { $regex: rx } },
                         { description: { $regex: rx } },
                         { url: { $regex: rx } },
@@ -51,12 +57,13 @@ class SearchController {
             }
 
             if (tagParts.length > 0) {
-                const tagOr = tagParts.map(t => ({ $or: [
-                    { tagsNormalized: { $in: [t.toLowerCase()] } },
-                    { tags: { $regex: toRegex(t) } },
-                    { tags: { $elemMatch: { $regex: toRegex(t) } } }
-                ] }));
-                andConds.push({ $or: tagOr });
+                const lowers = tagParts.map(t => t.toLowerCase());
+                try {
+                    const ids = await LinkTag.find({ userId, tagName: { $in: lowers } }).distinct('linkId');
+                    if (ids.length) {
+                        andConds.push({ _id: { $in: ids } });
+                    }
+                } catch (e) {}
             }
 
             const searchConditions = andConds.length === 1 ? andConds[0] : { $and: andConds };
@@ -261,16 +268,17 @@ class SearchController {
 
             if (type === 'links') {
                 const tagLower = tagQuery.toLowerCase();
-                const searchConditions = {
-                    userId: userId,
-                    isActive: true,
-                };
-                const tagMatchOr = { $or: [
+                let ids = [];
+                try {
+                    ids = await LinkTag.find({ userId, tagName: tagLower }).distinct('linkId');
+                } catch (e) {}
+
+                const baseCond = { userId: userId, isActive: true };
+                const finalCond = ids.length ? { $and: [ baseCond, { _id: { $in: ids } } ] } : { $and: [ baseCond, { $or: [
                     { tagsNormalized: { $in: [tagLower] } },
                     { tags: { $elemMatch: { $regex: toRegex(tagQuery) } } },
                     { tags: { $regex: toRegex(tagQuery) } }
-                ] };
-                const finalCond = { $and: [searchConditions, tagMatchOr] };
+                ] } ] };
 
                 const [links, totalCount] = await Promise.all([
                     Link.find(finalCond)
