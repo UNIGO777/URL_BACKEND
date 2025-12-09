@@ -133,11 +133,10 @@ const verifyOTP = async (req, res) => {
     // Verify OTP
     const isValidOTP = await OTP.verifyOTP(identifier, otp, type);
 
-    
-    if (!isValidOTP) {
+    if (!isValidOTP.success) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid or expired OTP'
+        message: isValidOTP.message || 'Invalid or expired OTP'
       });
     }
 
@@ -379,10 +378,10 @@ const verifyLoginOTP = async (req, res) => {
     // Verify OTP
     const isValidOTP = await OTP.verifyOTP(identifier, otp, otpType);
     
-    if (!isValidOTP) {
+    if (!isValidOTP.success) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid or expired OTP'
+        message: isValidOTP.message || 'Invalid or expired OTP'
       });
     }
 

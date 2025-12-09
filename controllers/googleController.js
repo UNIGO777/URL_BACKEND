@@ -191,11 +191,23 @@ const googleCallback = async (req, res, next) => {
         };
 
         if (isMobileApp) {
-          // For mobile app, redirect with tempId to complete registration
-          return res.redirect(`${mobileScheme}/?tempId=${tempId}&action=complete`);
+          // For mobile app, redirect with tempId and tempUserData to complete registration (no cookie dependency)
+          const tempUserData = {
+            googleId: user.googleId,
+            fullName: user.fullName,
+            email: user.email,
+            avatar: user.avatar,
+          };
+          return res.redirect(`${mobileScheme}/?tempId=${tempId}&action=complete&tempUserData=${encodeURIComponent(JSON.stringify(tempUserData))}`);
         }
         // Redirect to frontend form to collect additional info
-        return res.redirect(`${process.env.CLIENT_URL}/auth/complete?tempId=${tempId}`);
+        const tempUserData = encodeURIComponent(JSON.stringify({
+          googleId: user.googleId,
+          fullName: user.fullName,
+          email: user.email,
+          avatar: user.avatar,
+        }));
+        return res.redirect(`${process.env.CLIENT_URL}/auth/complete?tempId=${tempId}&tempUserData=${tempUserData}`);
       }
 
       // User already exists, generate token and redirect
