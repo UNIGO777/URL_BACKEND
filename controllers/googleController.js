@@ -160,7 +160,7 @@ const googleCallback = async (req, res, next) => {
     try {
       // Check if this is a mobile app request using state parameter or session
       const isMobileApp = req.query.state === 'mobile' || req.session?.isMobile || req.headers['user-agent']?.includes('Expo');
-      const mobileScheme = 'exp+my-app://expo-development-client'; // Expo development scheme
+      const mobileScheme = process.env.GOOGLE_MOBILE_REDIRECT_URI || 'myapp://oauth/callback';
       
       if (err) {
         if (isMobileApp) {
