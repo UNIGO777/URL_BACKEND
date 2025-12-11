@@ -16,7 +16,7 @@ const otpSchema = new mongoose.Schema({
     type: String,
     required: [true, 'OTP type is required'],
     enum: {
-      values: ['registration', 'login', 'password_reset', 'email_verification'],
+      values: ['registration', 'login', 'password_reset', 'email_verification', 'identifier_change'],
       message: 'Invalid OTP type'
     }
   },

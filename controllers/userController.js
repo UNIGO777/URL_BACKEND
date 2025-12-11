@@ -8,6 +8,9 @@ const User = require('../models/User');
 const Links = require('../models/Links');
 const Favs = require('../models/Favs');
 const LinkTag = require('../models/LinkTag');
+const OTP = require('../models/OTP');
+const { sendOTPEmail } = require('../utils/emailService');
+const { sendOTPSMS, validatePhoneNumber } = require('../utils/smsService');
 
 const sanitizeUser = (user) => {
   if (!user) return null;
@@ -361,6 +364,112 @@ const updateUserStatus = async (req, res) => {
   }
 };
 
+const requestIdentifierChangeOTP = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const { newIdentifier } = req.body || {};
+    if (!newIdentifier || typeof newIdentifier !== 'string') {
+      return res.status(400).json({ success: false, message: 'New identifier is required' });
+    }
+
+    const identifier = newIdentifier.trim().toLowerCase();
+    const emailRegex = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
+    const phoneRegex = /^[\+]?\d{7,16}$/;
+    const isEmail = emailRegex.test(identifier);
+    const isPhone = phoneRegex.test(identifier);
+
+    if (!isEmail && !isPhone) {
+      return res.status(400).json({ success: false, message: 'Provide a valid email or phone number' });
+    }
+
+    if (isPhone && !validatePhoneNumber(identifier)) {
+      return res.status(400).json({ success: false, message: 'Provide a valid phone number' });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (user.identifier === identifier) {
+      return res.status(400).json({ success: false, message: 'New identifier must be different from current' });
+    }
+
+    const exists = await User.findOne({ identifier });
+    if (exists) {
+      return res.status(409).json({ success: false, message: 'Identifier already in use' });
+    }
+
+    const otp = await OTP.createOTP(identifier, 'identifier_change');
+    let sent = false;
+    const targetType = isEmail ? 'email' : 'phone';
+    if (isEmail) {
+      sent = await sendOTPEmail(identifier, otp, 'identifier_change');
+    } else {
+      sent = await sendOTPSMS(identifier, otp, 'identifier_change');
+    }
+
+    if (!sent) {
+      return res.status(500).json({ success: false, message: `Failed to send OTP to ${targetType}` });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `OTP sent to your ${targetType}`,
+      data: { newIdentifier: identifier, identifierType: targetType }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to request OTP', error: error.message });
+  }
+};
+
+const verifyIdentifierChangeOTP = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const { newIdentifier, otp } = req.body || {};
+    if (!newIdentifier || !otp) {
+      return res.status(400).json({ success: false, message: 'New identifier and OTP are required' });
+    }
+
+    const identifier = String(newIdentifier).trim().toLowerCase();
+
+    const isValidOTP = await OTP.verifyOTP(identifier, String(otp), 'identifier_change');
+    if (!isValidOTP.success) {
+      return res.status(400).json({ success: false, message: isValidOTP.message || 'Invalid or expired OTP' });
+    }
+
+    const exists = await User.findOne({ identifier });
+    if (exists) {
+      return res.status(409).json({ success: false, message: 'Identifier already in use' });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    user.identifier = identifier;
+    user.identifierVerified = true;
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Identifier updated successfully',
+      data: { user: sanitizeUser(user) }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to verify OTP', error: error.message });
+  }
+};
+
 module.exports = {
   getProfile,
   updateProfile,
@@ -368,5 +477,7 @@ module.exports = {
   deleteAccount,
   getAllUsers,
   getUserById,
-  updateUserStatus
+  updateUserStatus,
+  requestIdentifierChangeOTP,
+  verifyIdentifierChangeOTP
 };

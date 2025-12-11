@@ -128,6 +128,10 @@ router.get('/profile', authenticate, userController.getProfile);
  */
 router.put('/profile', authenticate, userController.updateProfile);
 
+// Identifier change with OTP
+router.post('/identifier/request-otp', authenticate, userController.requestIdentifierChangeOTP);
+router.post('/identifier/verify-otp', authenticate, userController.verifyIdentifierChangeOTP);
+
 /**
  * @swagger
  * /users/change-password:
