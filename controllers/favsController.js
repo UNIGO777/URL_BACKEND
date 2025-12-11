@@ -9,10 +9,10 @@ const mongoose = require('mongoose');
 class FavsController {
 
   /**
-   * Add a link to favorites
+   * Add a link to favourites
    * POST /api/favs
    */
-  async addToFavorites(req, res) {
+  async addToFavourites(req, res) {
     try {
       const { linkId } = req.body;
       const userId = req.user.id;
@@ -47,7 +47,7 @@ class FavsController {
       if (existingFav) {
         return res.status(409).json({
           success: false,
-          message: 'Link is already in favorites',
+          message: 'Link is already in favourites',
           data: existingFav
         });
       }
@@ -77,12 +77,12 @@ class FavsController {
 
       res.status(201).json({
         success: true,
-        message: 'Link added to favorites successfully',
+        message: 'Link added to favourites successfully',
         data: savedFav
       });
 
     } catch (error) {
-      console.error('Error adding to favorites:', error);
+      console.error('Error adding to favourites:', error);
       res.status(500).json({
         success: false,
         message: 'Internal server error',
@@ -92,10 +92,10 @@ class FavsController {
   }
 
   /**
-   * Remove a link from favorites
+   * Remove a link from favourites
    * DELETE /api/favs/:linkId
    */
-  async removeFromFavorites(req, res) {
+  async removeFromFavourites(req, res) {
     try {
       const { linkId } = req.params;
       const userId = req.user.id;
@@ -120,11 +120,11 @@ class FavsController {
 
       res.status(200).json({
         success: true,
-        message: 'Link removed from favorites successfully',
+        message: 'Link removed from favourites successfully',
         data: { linkId, removedAt: new Date() }
       });
 
-      // If no favorites remain for this link, unset favorite flag on the Link
+      // If no favourites remain for this link, unset favorite flag on the Link
       try {
         const remaining = await Fav.countDocuments({ linkId });
         if (remaining === 0) {
@@ -139,7 +139,7 @@ class FavsController {
       }
 
     } catch (error) {
-      console.error('Error removing from favorites:', error);
+      console.error('Error removing from favourites:', error);
       res.status(500).json({
         success: false,
         message: 'Internal server error',
@@ -168,10 +168,10 @@ class FavsController {
       }
 
       // Get total count for pagination info
-      const totalFavorites = await Fav.countDocuments({ userId });
+      const totalFavourites = await Fav.countDocuments({ userId });
 
-      // Get paginated favorites with populated link details
-      const favorites = await Fav.find({ userId })
+      // Get paginated favourites with populated link details
+      const favourites = await Fav.find({ userId })
         .populate({
           path: 'linkId',
           select: 'url originalUrl linkType title description images metadata tags notes createdAt updatedAt'
@@ -181,7 +181,7 @@ class FavsController {
         .limit(limit);
 
       // Calculate pagination info
-      const totalPages = Math.ceil(totalFavorites / limit);
+      const totalPages = Math.ceil(totalFavourites / limit);
       const hasNextPage = page < totalPages;
       const hasPrevPage = page > 1;
 
@@ -189,11 +189,11 @@ class FavsController {
         success: true,
         message: 'Favorite links retrieved successfully',
         data: {
-          favorites,
+          favourites,
           pagination: {
             currentPage: page,
             totalPages,
-            totalFavorites,
+            totalFavourites,
             limit,
             hasNextPage,
             hasPrevPage,
@@ -255,7 +255,7 @@ class FavsController {
    * Get user's favorite statistics
    * GET /api/favs/stats
    */
-  async getFavoriteStats(req, res) {
+  async getFavouritestats(req, res) {
     try {
       const userId = req.user.id;
 
@@ -265,7 +265,7 @@ class FavsController {
         success: true,
         message: 'Favorite statistics retrieved successfully',
         data: stats[0] || {
-          totalFavorites: 0,
+          totalFavourites: 0,
           oldestFavorite: null,
           newestFavorite: null
         }

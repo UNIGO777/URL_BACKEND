@@ -55,7 +55,7 @@ favsSchema.virtual('daysSinceFavorited').get(function() {
 // ==================== STATIC METHODS ====================
 
 /**
- * Find all favorites for a user
+ * Find all favourites for a user
  */
 favsSchema.statics.findByUser = function(userId, options = {}) {
     const query = { userId };
@@ -91,7 +91,7 @@ favsSchema.statics.getUserStats = function(userId) {
         {
             $group: {
                 _id: null,
-                totalFavorites: { $sum: 1 },
+                totalFavourites: { $sum: 1 },
                 oldestFavorite: { $min: '$favoritedAt' },
                 newestFavorite: { $max: '$favoritedAt' }
             }

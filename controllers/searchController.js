@@ -108,7 +108,7 @@ class SearchController {
      * Search through user's favorite links
      * Searches in the linked content: title, description, tags, url, domain
      */
-    static async searchFavorites(req, res) {
+    static async searchFavourites(req, res) {
         try {
             const { page = 1, limit = 10 } = req.query;
             const userId = req.user.id;
@@ -128,7 +128,7 @@ class SearchController {
             const qLower = q ? q.toLowerCase() : null;
             const skip = (parseInt(page) - 1) * parseInt(limit);
 
-            const favoritesAggregation = [
+            const favouritesAggregation = [
                 { $match: { userId: userId } },
                 { $lookup: { from: 'links', localField: 'linkId', foreignField: '_id', as: 'linkDetails' } },
                 { $unwind: '$linkDetails' },
@@ -164,11 +164,11 @@ class SearchController {
                 { $sort: { favoritedAt: -1 } }
             ];
 
-            const totalCountResult = await Fav.aggregate([ ...favoritesAggregation, { $count: 'total' } ]);
+            const totalCountResult = await Fav.aggregate([ ...favouritesAggregation, { $count: 'total' } ]);
             const totalCount = totalCountResult.length > 0 ? totalCountResult[0].total : 0;
 
-            const favorites = await Fav.aggregate([
-                ...favoritesAggregation,
+            const favourites = await Fav.aggregate([
+                ...favouritesAggregation,
                 { $skip: skip },
                 { $limit: parseInt(limit) },
                 { $project: { _id: 1, userId: 1, linkId: 1, favoritedAt: 1, createdAt: 1, updatedAt: 1, link: '$linkDetails' } }
@@ -179,7 +179,7 @@ class SearchController {
             res.status(200).json({
                 success: true,
                 data: {
-                    favorites,
+                    favourites,
                     pagination: {
                         currentPage: parseInt(page),
                         totalPages,
@@ -188,17 +188,17 @@ class SearchController {
                         hasPrevPage: parseInt(page) > 1
                     }
                 },
-                message: `Found ${totalCount} favorites${q ? ` for "${q}"` : ''}${type ? ` in '${type}'` : ''}${tagParts.length ? ` with tags '${tagParts.join(',')}'` : ''}`
+                message: `Found ${totalCount} favourites${q ? ` for "${q}"` : ''}${type ? ` in '${type}'` : ''}${tagParts.length ? ` with tags '${tagParts.join(',')}'` : ''}`
             });
 
         } catch (error) {
-            console.error('Search favorites error:', error);
-            res.status(500).json({ success: false, message: 'Failed to search favorites', error: process.env.NODE_ENV === 'development' ? error.message : undefined });
+            console.error('Search favourites error:', error);
+            res.status(500).json({ success: false, message: 'Failed to search favourites', error: process.env.NODE_ENV === 'development' ? error.message : undefined });
         }
     }
 
     /**
-     * Combined search - search both links and favorites
+     * Combined search - search both links and favourites
      */
     static async searchAll(req, res) {
         try {
@@ -223,13 +223,13 @@ class SearchController {
                 await SearchController.searchLinks(linksReq, linksRes);
             }
 
-            // Search favorites if requested
-            if (type === 'all' || type === 'favorites') {
-                const favsReq = { ...req, query: { ...req.query, limit: type === 'favorites' ? limit : Math.ceil(limit / 2) } };
+            // Search favourites if requested
+            if (type === 'all' || type === 'favourites') {
+                const favsReq = { ...req, query: { ...req.query, limit: type === 'favourites' ? limit : Math.ceil(limit / 2) } };
                 const favsRes = {
-                    status: () => ({ json: (data) => { results.favorites = data; } })
+                    status: () => ({ json: (data) => { results.favourites = data; } })
                 };
-                await SearchController.searchFavorites(favsReq, favsRes);
+                await SearchController.searchFavourites(favsReq, favsRes);
             }
 
             res.status(200).json({
@@ -306,9 +306,9 @@ class SearchController {
                     message: `Found ${totalCount} links with tag "${tagQuery}"`
                 });
 
-            } else if (type === 'favorites') {
-                // Search in user's favorites by tag
-                const favorites = await Fav.aggregate([
+            } else if (type === 'favourites') {
+                // Search in user's favourites by tag
+                const favourites = await Fav.aggregate([
                     { $match: { userId: userId } },
                     {
                         $lookup: {
@@ -377,7 +377,7 @@ class SearchController {
                 res.status(200).json({
                     success: true,
                     data: {
-                        favorites,
+                        favourites,
                         pagination: {
                             currentPage: parseInt(page),
                             totalPages,

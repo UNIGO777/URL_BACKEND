@@ -13,11 +13,11 @@ const { authenticate } = require('../middleware/auth');
 
 /**
  * @route   POST /api/favs
- * @desc    Add a link to user's favorites
+ * @desc    Add a link to user's favourites
  * @access  Private
  * @body    { linkId }
  */
-router.post('/', authenticate, favsController.addToFavorites);
+router.post('/', authenticate, favsController.addToFavourites);
 
 /**
  * @route   GET /api/favs
@@ -30,11 +30,11 @@ router.get('/', authenticate, favsController.getFavoriteLinks);
 
 /**
  * @route   DELETE /api/favs/:linkId
- * @desc    Remove a link from user's favorites
+ * @desc    Remove a link from user's favourites
  * @access  Private
- * @param   linkId - The ID of the link to remove from favorites
+ * @param   linkId - The ID of the link to remove from favourites
  */
-router.delete('/:linkId', authenticate, favsController.removeFromFavorites);
+router.delete('/:linkId', authenticate, favsController.removeFromFavourites);
 
 /**
  * @route   GET /api/favs/check/:linkId
@@ -49,6 +49,6 @@ router.get('/check/:linkId', authenticate, favsController.checkIfFavorited);
  * @desc    Get user's favorite statistics
  * @access  Private
  */
-router.get('/stats', authenticate, favsController.getFavoriteStats);
+router.get('/stats', authenticate, favsController.getFavouritestats);
 
 module.exports = router;
