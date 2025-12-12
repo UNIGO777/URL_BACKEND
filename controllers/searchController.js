@@ -17,12 +17,15 @@ class SearchController {
             const q = String(req.query?.q ?? req.query?.query ?? '').trim();
             const tagsParam = String(req.query?.tags ?? req.query?.tag ?? '').trim();
             const typeParam = String(req.query?.type ?? '').trim();
+            const platformsParam = String(req.query?.platforms ?? '').trim();
+            const sortParam = String(req.query?.sort ?? '').trim().toLowerCase();
 
             const knownTypes = new Set(['social', 'product', 'news', 'video', 'portfolio', 'blog', 'education', 'forum', 'other']);
             const tagParts = tagsParam ? tagsParam.split(',').map(s => s.trim()).filter(Boolean) : [];
             const type = typeParam ? typeParam.toLowerCase() : (knownTypes.has(tagsParam.toLowerCase()) ? tagsParam.toLowerCase() : '');
+            const platformParts = platformsParam ? platformsParam.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : [];
 
-            if (!q && !type && tagParts.length === 0) {
+            if (!q && !type && tagParts.length === 0 && platformParts.length === 0 && !sortParam) {
                 return res.status(400).json({ success: false, message: 'Provide a search query, type, or tags' });
             }
 
@@ -66,11 +69,42 @@ class SearchController {
                 } catch (e) {}
             }
 
+            if (platformParts.length > 0) {
+                const platformMap = {
+                    youtube: ['youtube.com', 'youtu.be'],
+                    instagram: ['instagram.com'],
+                    facebook: ['facebook.com', 'fb.com'],
+                    twitter: ['twitter.com', 'x.com'],
+                    linkedin: ['linkedin.com'],
+                    reddit: ['reddit.com'],
+                    pinterest: ['pinterest.com'],
+                    tiktok: ['tiktok.com'],
+                    github: ['github.com']
+                };
+                const ors = [];
+                for (const p of platformParts) {
+                    const domains = platformMap[p] || [];
+                    for (const d of domains) {
+                        const rx = toRegex(d);
+                        ors.push({ 'metadata.domain': { $regex: rx } });
+                        ors.push({ url: { $regex: rx } });
+                        ors.push({ originalUrl: { $regex: rx } });
+                    }
+                }
+                if (ors.length) andConds.push({ $or: ors });
+            }
+
             const searchConditions = andConds.length === 1 ? andConds[0] : { $and: andConds };
+
+            const sortObj = (function() {
+                if (sortParam === 'az') return { title: 1 };
+                if (sortParam === 'za') return { title: -1 };
+                return { createdAt: -1 };
+            })();
 
             const [links, totalCount] = await Promise.all([
                 Link.find(searchConditions)
-                    .sort({ createdAt: -1 })
+                    .sort(sortObj)
                     .skip(skip)
                     .limit(parseInt(limit))
                     .lean(),
@@ -115,12 +149,15 @@ class SearchController {
             const q = String(req.query?.q ?? req.query?.query ?? '').trim();
             const tagsParam = String(req.query?.tags ?? req.query?.tag ?? '').trim();
             const typeParam = String(req.query?.type ?? '').trim();
+            const platformsParam = String(req.query?.platforms ?? '').trim();
+            const sortParam = String(req.query?.sort ?? '').trim().toLowerCase();
 
             const knownTypes = new Set(['social', 'product', 'news', 'video', 'portfolio', 'blog', 'education', 'forum', 'other']);
             const tagParts = tagsParam ? tagsParam.split(',').map(s => s.trim()).filter(Boolean) : [];
             const type = typeParam ? typeParam.toLowerCase() : (knownTypes.has(tagsParam.toLowerCase()) ? tagsParam.toLowerCase() : '');
+            const platformParts = platformsParam ? platformsParam.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : [];
 
-            if (!q && !type && tagParts.length === 0) {
+            if (!q && !type && tagParts.length === 0 && platformParts.length === 0 && !sortParam) {
                 return res.status(400).json({ success: false, message: 'Provide a search query, type, or tags' });
             }
 
@@ -159,9 +196,33 @@ class SearchController {
                         ] }));
                         andConds.push({ $or: tagOr });
                     }
+                    if (platformParts.length > 0) {
+                        const platformMap = {
+                            youtube: ['youtube.com', 'youtu.be'],
+                            instagram: ['instagram.com'],
+                            facebook: ['facebook.com', 'fb.com'],
+                            twitter: ['twitter.com', 'x.com'],
+                            linkedin: ['linkedin.com'],
+                            reddit: ['reddit.com'],
+                            pinterest: ['pinterest.com'],
+                            tiktok: ['tiktok.com'],
+                            github: ['github.com']
+                        };
+                        const ors = [];
+                        for (const p of platformParts) {
+                            const domains = platformMap[p] || [];
+                            for (const d of domains) {
+                                const rx2 = toRegex(d);
+                                ors.push({ 'linkDetails.metadata.domain': { $regex: rx2 } });
+                                ors.push({ 'linkDetails.url': { $regex: rx2 } });
+                                ors.push({ 'linkDetails.originalUrl': { $regex: rx2 } });
+                            }
+                        }
+                        if (ors.length) andConds.push({ $or: ors });
+                    }
                     return andConds.length ? { $and: andConds } : {};
                 })() },
-                { $sort: { favoritedAt: -1 } }
+                (function() { if (sortParam === 'az') return { $sort: { 'linkDetails.title': 1 } }; if (sortParam === 'za') return { $sort: { 'linkDetails.title': -1 } }; return { $sort: { favoritedAt: -1 } }; })()
             ];
 
             const totalCountResult = await Fav.aggregate([ ...favouritesAggregation, { $count: 'total' } ]);
