@@ -294,6 +294,17 @@ class LinksController {
       delete updateData.updatedAt;
       delete updateData.analytics;
 
+      // Trim text fields if provided (including AI summary in notes)
+      if (typeof updateData.title === 'string') {
+        updateData.title = updateData.title.trim();
+      }
+      if (typeof updateData.description === 'string') {
+        updateData.description = updateData.description.trim();
+      }
+      if (typeof updateData.notes === 'string') {
+        updateData.notes = updateData.notes.trim();
+      }
+
       // Clean tags array
       if (updateData.tags) {
         updateData.tags = Array.from(new Set(updateData.tags.map(tag => tag.trim()))).filter(tag => tag.length > 0);
