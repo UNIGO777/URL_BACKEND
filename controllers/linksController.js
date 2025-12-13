@@ -390,6 +390,9 @@ class LinksController {
       try {
         await LinkTag.deleteMany({ userId, linkId: deletedLink._id });
       } catch (e) {}
+      try {
+        await Fav.deleteMany({ userId, linkId: deletedLink._id });
+      } catch (e) {}
 
       res.json({
         success: true,
