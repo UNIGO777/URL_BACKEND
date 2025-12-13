@@ -97,6 +97,7 @@ app.use('/api/gemini', geminiRoutes);
 app.use('/api/links', linksRoutes);
 app.use('/api/favs', favsRoutes);
 app.use('/api/search', searchRoutes);
+app.use('/api/share', require('./routes/share'));
 
 // Error handling middleware (must be last)
 app.use(errorHandler);
