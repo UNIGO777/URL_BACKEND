@@ -35,6 +35,7 @@ class ShareController {
       }
       const token = crypto.randomBytes(16).toString('hex');
       store.set(token, { url, raw: combined, expiresAt: Date.now() + TTL_MS });
+      console.log(token, url, combined)
       return res.status(200).json({ success: true, data: { token } });
     } catch (error) {
       return res.status(500).json({ success: false, message: 'Failed to create share token', error: error.message });
