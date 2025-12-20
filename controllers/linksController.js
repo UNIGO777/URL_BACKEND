@@ -1,5 +1,6 @@
 const Link = require('../models/Links');
 const { normalizeUrl } = require('../utils/url');
+const { resolveUrl } = require('../utils/helpers');
 const mongoose = require('mongoose');
 const Fav = require('../models/Favs');
 const LinkTag = require('../models/LinkTag');
@@ -40,6 +41,20 @@ class LinksController {
 
       const normalizedUrl = normalizeUrl(url);
       const normalizedOriginalUrl = originalUrl ? normalizeUrl(originalUrl) : undefined;
+      const baseForImages = (() => {
+        try {
+          return new URL(normalizedUrl).origin;
+        } catch (e) {
+          return normalizedUrl;
+        }
+      })();
+      const urlRegex = /^(https?):\/\/[^\s/$.?#].[^\s]*$/i;
+      const sanitizeImage = (v) => {
+        if (!v) return undefined;
+        const resolved = resolveUrl(v, baseForImages);
+        if (!resolved) return undefined;
+        return urlRegex.test(resolved) ? resolved : undefined;
+      };
 
       // Check if user already has this URL saved
       const existingLink = await Link.findOne({ 
@@ -65,7 +80,12 @@ class LinksController {
         linkType,
         title: title?.trim(),
         description: description?.trim(),
-        images,
+        images: {
+          logo: sanitizeImage(images.logo),
+          ogImage: sanitizeImage(images.ogImage),
+          favicon: sanitizeImage(images.favicon),
+          appleTouchIcon: sanitizeImage(images.appleTouchIcon),
+        },
         metadata,
         tags: Array.from(new Set(tags.map(tag => tag.trim()))).filter(tag => tag.length > 0),
         tagsNormalized: Array.from(new Set(tags.map(tag => tag.trim().toLowerCase()))).filter(tag => tag.length > 0),
@@ -313,6 +333,38 @@ class LinksController {
 
       if (updateData.url) {
         updateData.url = normalizeUrl(updateData.url);
+      }
+      if (updateData.images) {
+        let baseForImagesUpdate = null;
+        if (updateData.url) {
+          try {
+            baseForImagesUpdate = new URL(updateData.url).origin;
+          } catch (e) {
+            baseForImagesUpdate = updateData.url;
+          }
+        } else {
+          const current = await Link.findOne({ _id: id, userId: userId, isActive: true }).select('url');
+          if (current && current.url) {
+            try {
+              baseForImagesUpdate = new URL(current.url).origin;
+            } catch (e) {
+              baseForImagesUpdate = current.url;
+            }
+          }
+        }
+        const urlRegexUpdate = /^(https?):\/\/[^\s/$.?#].[^\s]*$/i;
+        const sanitizeUpdate = (v) => {
+          if (!v) return undefined;
+          const resolved = baseForImagesUpdate ? resolveUrl(v, baseForImagesUpdate) : v;
+          if (!resolved) return undefined;
+          return urlRegexUpdate.test(resolved) ? resolved : undefined;
+        };
+        updateData.images = {
+          logo: sanitizeUpdate(updateData.images.logo),
+          ogImage: sanitizeUpdate(updateData.images.ogImage),
+          favicon: sanitizeUpdate(updateData.images.favicon),
+          appleTouchIcon: sanitizeUpdate(updateData.images.appleTouchIcon),
+        };
       }
 
       const updatedLink = await Link.findOneAndUpdate(
