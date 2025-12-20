@@ -2,10 +2,10 @@
   "name": "lambda-link-extractor",
   "version": "1.0.0",
   "description": "Node.js server with Lambda function for executing links without CORS errors",
-  "main": "app.js",
+  "main": "server.js",
   "scripts": {
-    "start": "node app.js",
-    "dev": "nodemon app.js"
+    "start": "node server.js",
+    "dev": "nodemon server.js"
   },
   "keywords": [
     "lambda",
