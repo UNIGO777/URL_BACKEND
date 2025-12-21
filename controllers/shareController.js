@@ -21,21 +21,20 @@ const extractFirstUrl = (input) => {
 class ShareController {
   async create(req, res) {
     try {
-      const { text, webUrl, parts } = req.body || {};
+      const { text, webUrl, parts, files, subject, title } = req.body || {};
       const arr = [];
       if (typeof webUrl === 'string') arr.push(webUrl);
       if (typeof text === 'string') arr.push(text);
+      if (typeof subject === 'string') arr.push(subject);
+      if (typeof title === 'string') arr.push(title);
       if (Array.isArray(parts)) {
         arr.push(...parts.map((x) => (typeof x === 'string' ? x : '')));
       }
       const combined = arr.filter(Boolean).join(' ');
       const url = extractFirstUrl(combined);
-      if (!url) {
-        return res.status(400).json({ success: false, message: 'No URL found in shared content' });
-      }
+      const hasFiles = Array.isArray(files) && files.length > 0;
       const token = crypto.randomBytes(16).toString('hex');
-      store.set(token, { url, raw: combined, expiresAt: Date.now() + TTL_MS });
-      console.log(token, url, combined)
+      store.set(token, { url: url || null, raw: combined, files: hasFiles ? files : [], expiresAt: Date.now() + TTL_MS });
       return res.status(200).json({ success: true, data: { token } });
     } catch (error) {
       return res.status(500).json({ success: false, message: 'Failed to create share token', error: error.message });
@@ -53,7 +52,7 @@ class ShareController {
         store.delete(token);
         return res.status(404).json({ success: false, message: 'Invalid or expired token' });
       }
-      return res.status(200).json({ success: true, data: { url: item.url, rawText: item.raw } });
+      return res.status(200).json({ success: true, data: { url: item.url, rawText: item.raw, files: item.files || [] } });
     } catch (error) {
       return res.status(500).json({ success: false, message: 'Failed to get shared link', error: error.message });
     }
