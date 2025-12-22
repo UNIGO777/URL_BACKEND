@@ -22,6 +22,7 @@ class ShareController {
   async create(req, res) {
     try {
       const { text, webUrl, parts, files, subject, title } = req.body || {};
+      console.log('[create] incoming body:', { text, webUrl, parts, files, subject, title });
       const arr = [];
       if (typeof webUrl === 'string') arr.push(webUrl);
       if (typeof text === 'string') arr.push(text);
@@ -35,6 +36,7 @@ class ShareController {
       const hasFiles = Array.isArray(files) && files.length > 0;
       const token = crypto.randomBytes(16).toString('hex');
       store.set(token, { url: url || null, raw: combined, files: hasFiles ? files : [], expiresAt: Date.now() + TTL_MS });
+      console.log('[create] stored data:', { url: url || null, raw: combined, files: hasFiles ? files : [], expiresAt: Date.now() + TTL_MS });
       return res.status(200).json({ success: true, data: { token } });
     } catch (error) {
       return res.status(500).json({ success: false, message: 'Failed to create share token', error: error.message });
@@ -52,6 +54,7 @@ class ShareController {
         store.delete(token);
         return res.status(404).json({ success: false, message: 'Invalid or expired token' });
       }
+      console.log('[get] sending data:', { url: item.url, rawText: item.raw, files: item.files || [] });
       return res.status(200).json({ success: true, data: { url: item.url, rawText: item.raw, files: item.files || [] } });
     } catch (error) {
       return res.status(500).json({ success: false, message: 'Failed to get shared link', error: error.message });
