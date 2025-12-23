@@ -34,6 +34,7 @@ const generateHeaders = (url, userAgent) => {
   const isChromiumLike = /Chrome\/|Edg\//.test(userAgent);
   const secChUa = isChromiumLike ? '"Not.A/Brand";v="99", "Chromium";v="120", "Google Chrome";v="120"' : undefined;
   const secFetchSite = urlObj.hostname && origin.includes(urlObj.hostname) ? 'same-origin' : 'none';
+  const refererVal = hostname.includes('blinkit.com') ? origin : url;
   
   return {
     'User-Agent': userAgent,
@@ -49,7 +50,7 @@ const generateHeaders = (url, userAgent) => {
     'Sec-Fetch-Site': secFetchSite,
     'Sec-Fetch-User': '?1',
     'Cache-Control': 'max-age=0',
-    'Referer': url,
+    'Referer': refererVal,
     'Origin': origin
   };
 };
@@ -614,11 +615,36 @@ async function fetchHtmlWithBrowser(url) {
       console.warn('Playwright not installed; browser fetch unavailable.');
       return null;
     }
-    const browser = await chromium.launch({ headless: true });
+    let browser;
+    try {
+      const launchOptions = { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] };
+      const exePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH || process.env.CHROME_PATH || process.env.CHROMIUM_PATH;
+      if (exePath) launchOptions.executablePath = exePath;
+      browser = await chromium.launch(launchOptions);
+    } catch (e) {
+      const msg = String(e?.message || e);
+      const needsInstall = msg.includes('Executable doesn\'t exist') || msg.includes('playwright was just installed') || msg.includes('Please run the following command');
+      if (needsInstall && !fetchHtmlWithBrowser.__installAttempted) {
+        fetchHtmlWithBrowser.__installAttempted = true;
+        try {
+          const { execSync } = require('child_process');
+          execSync('npx playwright install chromium', { stdio: 'ignore' });
+          const launchOptions = { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] };
+          const exePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH || process.env.CHROME_PATH || process.env.CHROMIUM_PATH;
+          if (exePath) launchOptions.executablePath = exePath;
+          browser = await chromium.launch(launchOptions);
+        } catch (_) {
+          return null;
+        }
+      } else {
+        return null;
+      }
+    }
     const context = await browser.newContext({
       locale: 'en-IN',
       timezoneId: 'Asia/Kolkata',
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      extraHTTPHeaders: generateHeaders(url, getRandomUserAgent()),
       viewport: { width: 1366, height: 768 }
     });
     const page = await context.newPage();
