@@ -26,21 +26,30 @@ const getRandomUserAgent = () => {
 const generateHeaders = (url, userAgent) => {
   const urlObj = new URL(url);
   const origin = `${urlObj.protocol}//${urlObj.hostname}`;
+  const hostname = urlObj.hostname.toLowerCase();
+  const lang = hostname.includes('blinkit.com') ? 'en-IN,hi;q=0.8,en-US;q=0.7,en;q=0.6' : 'en-US,en;q=0.9';
+  const platform = userAgent.includes('Windows NT') ? '"Windows"' :
+                   userAgent.includes('Macintosh') ? '"macOS"' :
+                   userAgent.includes('Linux') ? '"Linux"' : '"Unknown"';
+  const isChromiumLike = /Chrome\/|Edg\//.test(userAgent);
+  const secChUa = isChromiumLike ? '"Not.A/Brand";v="99", "Chromium";v="120", "Google Chrome";v="120"' : undefined;
+  const secFetchSite = urlObj.hostname && origin.includes(urlObj.hostname) ? 'same-origin' : 'none';
   
   return {
     'User-Agent': userAgent,
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Language': lang,
     'Accept-Encoding': 'gzip, deflate, br',
     'DNT': '1',
     'Connection': 'keep-alive',
     'Upgrade-Insecure-Requests': '1',
+    ...(secChUa ? { 'Sec-Ch-Ua': secChUa, 'Sec-Ch-Ua-Mobile': '?0', 'Sec-Ch-Ua-Platform': platform } : {}),
     'Sec-Fetch-Dest': 'document',
     'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-Site': secFetchSite,
     'Sec-Fetch-User': '?1',
     'Cache-Control': 'max-age=0',
-    'Referer': origin,
+    'Referer': url,
     'Origin': origin
   };
 };
@@ -573,8 +582,62 @@ module.exports = {
   classifyLinkType,
   fetchPlatformMetadata,
   needsPlatformFallback,
-  mergeMetadata
+  mergeMetadata,
+  needsBrowserFetch,
+  fetchHtmlWithBrowser
 };
+
+/**
+ * Determine if a URL should be fetched via a real browser
+ * Useful for sites with WAF/bot protection (e.g., Blinkit)
+ * @param {string} url
+ * @returns {boolean}
+ */
+function needsBrowserFetch(url) {
+  if (!url) return false;
+  const u = url.toLowerCase();
+  return u.includes('blinkit.com');
+}
+
+/**
+ * Fetch page HTML using Playwright (Chromium) to mimic a real browser
+ * @param {string} url
+ * @returns {Promise<{status:number,statusText:string,headers:object,data:string}|null>}
+ */
+async function fetchHtmlWithBrowser(url) {
+  try {
+    let chromium;
+    try {
+      // Lazy-load to avoid crashing if dependency missing
+      ({ chromium } = require('playwright'));
+    } catch (_) {
+      console.warn('Playwright not installed; browser fetch unavailable.');
+      return null;
+    }
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({
+      locale: 'en-IN',
+      timezoneId: 'Asia/Kolkata',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      viewport: { width: 1366, height: 768 }
+    });
+    const page = await context.newPage();
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    // Allow some network activity to settle
+    try { await page.waitForLoadState('networkidle', { timeout: 5000 }); } catch (_) {}
+    const html = await page.content();
+    await browser.close();
+    return {
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'text/html; charset=UTF-8' },
+      data: html
+    };
+  } catch (err) {
+    console.warn('Browser fetch failed:', err?.message || err);
+    return null;
+  }
+}
 
 /**
  * Detect if URL is a YouTube link

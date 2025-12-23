@@ -12,7 +12,9 @@ const {
   classifyLinkType,
   fetchPlatformMetadata,
   needsPlatformFallback,
-  mergeMetadata
+  mergeMetadata,
+  needsBrowserFetch,
+  fetchHtmlWithBrowser
 } = require('../utils/helpers');
 
 /**
@@ -53,11 +55,37 @@ class LambdaController {
       // Execute request with retry logic
       const result = await this.executeWithRetry(url, method, customHeaders, data);
       
+      // If HTML looks like an error page and domain needs browser fetch, try Playwright fallback
+      let effectiveResult = result;
+      try {
+        const domainNeedsBrowser = needsBrowserFetch(url);
+        const htmlText = isHtmlContent(result) && typeof result.data === 'string' ? String(result.data).toLowerCase() : '';
+        const looksError = htmlText.includes('access denied') || htmlText.includes('forbidden') || htmlText.includes('blocked') || htmlText.includes('captcha') || htmlText.includes('error');
+        if (domainNeedsBrowser && looksError) {
+          console.log('🧭 Browser fallback: attempting headless fetch...');
+          const browserRes = await fetchHtmlWithBrowser(url);
+          if (browserRes && typeof browserRes.data === 'string' && browserRes.data.length > 0) {
+            effectiveResult = {
+              status: browserRes.status,
+              statusText: browserRes.statusText,
+              headers: browserRes.headers,
+              data: browserRes.data,
+              attempt: (result?.attempt || 0) + 1,
+              durationMs: result?.durationMs
+            };
+          } else {
+            console.log('⚠️ Browser fallback unavailable or returned empty content.');
+          }
+        }
+      } catch (e) {
+        console.log('⚠️ Browser fallback failed:', e?.message || e);
+      }
+      
       // Extract metadata (images, title, description) if response is HTML
       let metadata = null;
-      if (isHtmlContent(result) && typeof result.data === 'string') {
+      if (isHtmlContent(effectiveResult) && typeof effectiveResult.data === 'string') {
         console.log('🖼️  Extracting metadata from HTML content...');
-        metadata = extractMetadata(result.data, url);
+        metadata = extractMetadata(effectiveResult.data, url);
         console.log('📸 Images found:', {
           logo: metadata.images.logo ? '✅' : '❌',
           ogImage: metadata.images.ogImage ? '✅' : '❌',
@@ -93,7 +121,7 @@ class LambdaController {
         url,
         metadata?.title || '',
         metadata?.description || '',
-        isHtmlContent(result) ? result.data : ''
+        isHtmlContent(effectiveResult) ? effectiveResult.data : ''
       );
       console.log('🔍 Link classified as:', linkType);
       
@@ -101,17 +129,17 @@ class LambdaController {
       const responseData = {
         url,
         method: method.toUpperCase(),
-        status: result.status,
-        statusText: result.statusText,
+        status: effectiveResult.status,
+        statusText: effectiveResult.statusText,
         linkType,
         metadata: {
           domain: (() => { try { return new URL(url).hostname; } catch { return ''; } })(),
-          statusCode: result.status,
-          statusText: result.statusText,
+          statusCode: effectiveResult.status,
+          statusText: effectiveResult.statusText,
           method: method.toUpperCase(),
-          contentType: (result.headers && (result.headers['content-type'] || result.headers['Content-Type'])) || '',
-          responseTime: result.durationMs,
-          attempt: result.attempt
+          contentType: (effectiveResult.headers && (effectiveResult.headers['content-type'] || effectiveResult.headers['Content-Type'])) || '',
+          responseTime: effectiveResult.durationMs,
+          attempt: effectiveResult.attempt
         }
         // headers: result.headers,
         // data: result.data
@@ -133,14 +161,16 @@ class LambdaController {
           metadata?.images?.favicon ||
           metadata?.images?.appleTouchIcon
       ) || isHtmlContent(result);
-      const upstreamOk = result.status >= 200 && result.status < 300;
-      const clientSuccess = upstreamOk || hasUsefulMetadata;
-      const httpStatus = clientSuccess ? 200 : result.status;
+      const upstreamOk = effectiveResult.status >= 200 && effectiveResult.status < 300;
+      const htmlText = isHtmlContent(effectiveResult) && typeof effectiveResult.data === 'string' ? String(effectiveResult.data).toLowerCase() : '';
+      const looksError = htmlText.includes('access denied') || htmlText.includes('forbidden') || htmlText.includes('blocked') || htmlText.includes('captcha') || (String(metadata?.title || '').toLowerCase().includes('error'));
+      const clientSuccess = upstreamOk || (hasUsefulMetadata && !looksError);
+      const httpStatus = clientSuccess ? 200 : effectiveResult.status;
 
       res.status(httpStatus).json({
         success: clientSuccess,
         data: responseData,
-        attempt: result.attempt,
+        attempt: effectiveResult.attempt,
         timestamp: new Date().toISOString()
       });
 
@@ -168,6 +198,7 @@ class LambdaController {
    */
   async executeWithRetry(url, method, customHeaders = {}, data = null) {
     let lastError;
+    let stickyCookie = '';
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
@@ -180,7 +211,8 @@ class LambdaController {
         // Merge headers (custom headers override browser headers)
         const finalHeaders = {
           ...browserHeaders,
-          ...customHeaders
+          ...customHeaders,
+          ...(stickyCookie ? { Cookie: stickyCookie } : {})
         };
 
         console.log(`🎭 Using User-Agent: ${userAgent.substring(0, 50)}...`);
@@ -209,14 +241,58 @@ class LambdaController {
         
         console.log(`✅ Success! Status: ${response.status} ${response.statusText}`);
         
-        return {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers,
-          data: response.data,
-          attempt: attempt + 1,
-          durationMs
-        };
+        const setCookies = response.headers['set-cookie'] || response.headers['Set-Cookie'];
+        if (Array.isArray(setCookies) && setCookies.length) {
+          const pairs = setCookies.map(c => String(c).split(';')[0]).filter(Boolean);
+          if (pairs.length) {
+            const merged = pairs.join('; ');
+            stickyCookie = merged;
+          }
+        } else if (typeof setCookies === 'string' && setCookies.length) {
+          const pair = setCookies.split(';')[0];
+          stickyCookie = pair;
+        }
+
+        const upstreamOk = response.status >= 200 && response.status < 300;
+        const htmlOk = isHtmlContent(response) && typeof response.data === 'string';
+        let metaOk = false;
+        if (htmlOk) {
+          try {
+            const m = extractMetadata(response.data, url);
+            const t = String(m?.title || '').toLowerCase();
+            const d = String(m?.description || '').toLowerCase();
+            const errorish = t.includes('403') || t.includes('forbidden') || t.includes('blocked') || t.includes('captcha') || t.includes('error') || d.includes('error');
+            metaOk = !errorish && Boolean(
+              m?.title ||
+              m?.description ||
+              m?.images?.logo ||
+              m?.images?.ogImage ||
+              m?.images?.favicon ||
+              m?.images?.appleTouchIcon
+            );
+          } catch {}
+        }
+
+        const domainIsBlinkit = (() => { try { return new URL(url).hostname.includes('blinkit.com'); } catch { return false; } })();
+        const bodyStr = typeof response.data === 'string' ? response.data.toLowerCase() : '';
+        const looksBlocked = bodyStr.includes('access denied') || bodyStr.includes('forbidden') || bodyStr.includes('blocked') || bodyStr.includes('captcha');
+        const shouldRetry = (!upstreamOk && (response.status === 403 || response.status === 429 || response.status === 503)) || (domainIsBlinkit && looksBlocked && !metaOk);
+
+        if (upstreamOk || metaOk || attempt === MAX_RETRIES - 1 || !shouldRetry) {
+          return {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers,
+            data: response.data,
+            attempt: attempt + 1,
+            durationMs
+          };
+        }
+
+        const delay = calculateBackoffDelay(attempt);
+        console.log(`⏳ Retrying due to upstream status ${response.status}. Waiting ${delay}ms...`);
+        await sleep(delay);
+        continue;
 
       } catch (error) {
         lastError = error;
