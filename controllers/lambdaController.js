@@ -79,6 +79,13 @@ class LambdaController {
             console.log('⚠️  Platform fallback unavailable or failed.');
           }
         }
+
+        if (!metadata.images.favicon) {
+          try {
+            const u = new URL(url);
+            metadata.images.favicon = `${u.protocol}//${u.hostname}/favicon.ico`;
+          } catch {}
+        }
       }
       
       // Classify link type based on URL and extracted content
@@ -97,6 +104,15 @@ class LambdaController {
         status: result.status,
         statusText: result.statusText,
         linkType,
+        metadata: {
+          domain: (() => { try { return new URL(url).hostname; } catch { return ''; } })(),
+          statusCode: result.status,
+          statusText: result.statusText,
+          method: method.toUpperCase(),
+          contentType: (result.headers && (result.headers['content-type'] || result.headers['Content-Type'])) || '',
+          responseTime: result.durationMs,
+          attempt: result.attempt
+        }
         // headers: result.headers,
         // data: result.data
       };
@@ -109,8 +125,20 @@ class LambdaController {
       }
 
       // Return direct JSON response instead of Lambda format for better API usability
-      res.status(result.status).json({
-        success: result.status >= 200 && result.status < 300,
+      const hasUsefulMetadata = Boolean(
+        metadata?.title ||
+          metadata?.description ||
+          metadata?.images?.logo ||
+          metadata?.images?.ogImage ||
+          metadata?.images?.favicon ||
+          metadata?.images?.appleTouchIcon
+      ) || isHtmlContent(result);
+      const upstreamOk = result.status >= 200 && result.status < 300;
+      const clientSuccess = upstreamOk || hasUsefulMetadata;
+      const httpStatus = clientSuccess ? 200 : result.status;
+
+      res.status(httpStatus).json({
+        success: clientSuccess,
         data: responseData,
         attempt: result.attempt,
         timestamp: new Date().toISOString()
@@ -175,7 +203,9 @@ class LambdaController {
         }
 
         // Execute request
+        const started = Date.now();
         const response = await axios(config);
+        const durationMs = Date.now() - started;
         
         console.log(`✅ Success! Status: ${response.status} ${response.statusText}`);
         
@@ -184,7 +214,8 @@ class LambdaController {
           statusText: response.statusText,
           headers: response.headers,
           data: response.data,
-          attempt: attempt + 1
+          attempt: attempt + 1,
+          durationMs
         };
 
       } catch (error) {

@@ -405,7 +405,7 @@ const classifyLinkType = (url, title = '', description = '', html = '') => {
   const productDomains = [
     'amazon.com', 'ebay.com', 'shopify.com', 'etsy.com', 'alibaba.com',
     'walmart.com', 'target.com', 'bestbuy.com', 'apple.com/store', 'store.google.com',
-    'microsoft.com/store', 'nike.com', 'adidas.com', 'zalando.com', 'asos.com'
+    'microsoft.com/store', 'nike.com', 'adidas.com', 'zalando.com', 'asos.com', 'blinkit.com'
   ];
   
   // Education domains
