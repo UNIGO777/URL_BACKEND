@@ -80,41 +80,23 @@ class LambdaController {
       // Execute request with retry logic
       const result = await this.executeWithRetry(targetUrl, method, customHeaders, data);
       
-      // If HTML looks like an error page and domain needs browser fetch, try Playwright fallback
       let effectiveResult = result;
       let didBrowserFetch = false;
       const effectiveUrl = result?.finalUrl || targetUrl;
-      try {
-        const htmlText = isHtmlContent(result) && typeof result.data === 'string' ? String(result.data) : '';
-        const blocked = looksLikeBotOrBlockedHtml(htmlText, effectiveUrl);
-        const domainNeedsBrowser = needsBrowserFetch(effectiveUrl);
-        if (blocked || domainNeedsBrowser) {
-          console.log('🧭 Browser fallback: attempting headless fetch...');
-          const browserRes = await fetchHtmlWithBrowser(effectiveUrl);
-          if (browserRes && typeof browserRes.data === 'string' && browserRes.data.length > 0) {
-            effectiveResult = {
-              status: browserRes.status,
-              statusText: browserRes.statusText,
-              headers: browserRes.headers,
-              data: browserRes.data,
-              attempt: (result?.attempt || 0) + 1,
-              durationMs: result?.durationMs,
-              finalUrl: effectiveUrl
-            };
-            didBrowserFetch = true;
-          } else {
-            console.log('⚠️ Browser fallback unavailable or returned empty content.');
-          }
-        }
-      } catch (e) {
-        console.log('⚠️ Browser fallback failed:', e?.message || e);
-      }
       
       // Extract metadata (images, title, description) if response is HTML
       let metadata = null;
-      if (isHtmlContent(effectiveResult) && typeof effectiveResult.data === 'string') {
+      const effectiveBody = typeof effectiveResult.data === 'string' ? String(effectiveResult.data) : '';
+      const effectiveSeemsHtml = Boolean(
+        effectiveBody &&
+          (isHtmlContent(effectiveResult) ||
+            /<\s*html\b/i.test(effectiveBody) ||
+            /<\s*head\b/i.test(effectiveBody) ||
+            /<\s*title\b/i.test(effectiveBody))
+      );
+      if (effectiveSeemsHtml) {
         console.log('🖼️  Extracting metadata from HTML content...');
-        metadata = extractMetadata(effectiveResult.data, effectiveUrl);
+        metadata = extractMetadata(effectiveBody, effectiveUrl);
         console.log('📸 Images found:', {
           logo: metadata.images.logo ? '✅' : '❌',
           ogImage: metadata.images.ogImage ? '✅' : '❌',
@@ -126,8 +108,10 @@ class LambdaController {
           description: metadata.description ? '✅' : '❌'
         });
 
-        const blocked = looksLikeBotOrBlockedHtml(effectiveResult.data, effectiveUrl);
-        if (!didBrowserFetch && (blocked || (needsBrowserFetch(effectiveUrl) && !hasUsefulMetadata(metadata)))) {
+        const blocked = looksLikeBotOrBlockedHtml(effectiveBody, effectiveUrl);
+        const hasMeta = hasUsefulMetadata(metadata);
+        const shouldBrowserFetch = (!hasMeta && blocked) || (!hasMeta && needsBrowserFetch(effectiveUrl));
+        if (!didBrowserFetch && shouldBrowserFetch) {
           console.log('🧭 Browser fallback: attempting headless fetch...');
           const browserRes = await fetchHtmlWithBrowser(effectiveUrl);
           if (browserRes && typeof browserRes.data === 'string' && browserRes.data.length > 0) {
@@ -140,7 +124,8 @@ class LambdaController {
               durationMs: effectiveResult?.durationMs,
               finalUrl: effectiveUrl
             };
-            metadata = extractMetadata(effectiveResult.data, effectiveUrl);
+            const browserBody = typeof effectiveResult.data === 'string' ? String(effectiveResult.data) : '';
+            metadata = extractMetadata(browserBody, effectiveUrl);
           }
         }
 
@@ -202,17 +187,17 @@ class LambdaController {
 
       // Return direct JSON response instead of Lambda format for better API usability
       const hasUsefulMeta = Boolean(
-        metadata?.title ||
-          metadata?.description ||
-          metadata?.images?.logo ||
-          metadata?.images?.ogImage ||
-          metadata?.images?.favicon ||
-          metadata?.images?.appleTouchIcon
+          metadata?.title ||
+            metadata?.description ||
+            metadata?.images?.logo ||
+            metadata?.images?.ogImage ||
+            metadata?.images?.favicon ||
+            metadata?.images?.appleTouchIcon
       ) || isHtmlContent(result);
       const upstreamOk = effectiveResult.status >= 200 && effectiveResult.status < 300;
-      const htmlText = isHtmlContent(effectiveResult) && typeof effectiveResult.data === 'string' ? String(effectiveResult.data).toLowerCase() : '';
-      const looksError = looksLikeBotOrBlockedHtml(htmlText, effectiveUrl) || (String(metadata?.title || '').toLowerCase().includes('error'));
-      const clientSuccess = upstreamOk || (hasUsefulMeta && !looksError);
+      const htmlText = typeof effectiveResult.data === 'string' ? String(effectiveResult.data) : '';
+      const looksError = (looksLikeBotOrBlockedHtml(htmlText, effectiveUrl) && !hasUsefulMeta) || (String(metadata?.title || '').toLowerCase().includes('error'));
+      const clientSuccess = (upstreamOk && !looksError) || (hasUsefulMeta && !looksError);
       const httpStatus = clientSuccess ? 200 : effectiveResult.status;
 
       res.status(httpStatus).json({
@@ -309,11 +294,18 @@ class LambdaController {
         }
 
         const upstreamOk = response.status >= 200 && response.status < 300;
-        const htmlOk = isHtmlContent(response) && typeof response.data === 'string';
+        const bodyText = typeof response.data === 'string' ? response.data : '';
+        const htmlOk = Boolean(
+          bodyText &&
+            (isHtmlContent(response) ||
+              /<\s*html\b/i.test(bodyText) ||
+              /<\s*head\b/i.test(bodyText) ||
+              /<\s*title\b/i.test(bodyText))
+        );
         let metaOk = false;
         if (htmlOk) {
           try {
-            const m = extractMetadata(response.data, finalUrl);
+            const m = extractMetadata(bodyText, finalUrl);
             const t = String(m?.title || '').toLowerCase();
             const d = String(m?.description || '').toLowerCase();
             const errorish = t.includes('403') || t.includes('forbidden') || t.includes('blocked') || t.includes('captcha') || t.includes('error') || d.includes('error');
@@ -328,12 +320,13 @@ class LambdaController {
           } catch {}
         }
 
+        const blockedHtml = htmlOk && looksLikeBotOrBlockedHtml(bodyText, finalUrl);
         const domainIsBlinkit = (() => { try { return new URL(finalUrl).hostname.includes('blinkit.com'); } catch { return false; } })();
-        const bodyStr = typeof response.data === 'string' ? response.data.toLowerCase() : '';
+        const bodyStr = bodyText.toLowerCase();
         const looksBlocked = bodyStr.includes('access denied') || bodyStr.includes('forbidden') || bodyStr.includes('blocked') || bodyStr.includes('captcha');
-        const shouldRetry = (!upstreamOk && (response.status === 403 || response.status === 429 || response.status === 503)) || (domainIsBlinkit && looksBlocked && !metaOk);
+        const shouldRetry = (!upstreamOk && (response.status === 403 || response.status === 429 || response.status === 503)) || (domainIsBlinkit && looksBlocked && !metaOk) || (blockedHtml && !metaOk);
 
-        if (upstreamOk || metaOk || attempt === MAX_RETRIES - 1 || !shouldRetry) {
+        if ((upstreamOk && !blockedHtml) || metaOk || attempt === MAX_RETRIES - 1 || !shouldRetry) {
           return {
             status: response.status,
             statusText: response.statusText,
