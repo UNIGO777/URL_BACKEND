@@ -49,7 +49,7 @@ const generateHeaders = (url, userAgent) => {
     'Sec-Fetch-Site': secFetchSite,
     'Sec-Fetch-User': '?1',
     'Cache-Control': 'max-age=0',
-    ...(hostname.includes('blinkit.com') || hostname.includes('ajio.com') ? { 'Referer': origin } : {})
+    ...(hostname.includes('blinkit.com') ? { 'Referer': origin } : {})
   };
 };
 
@@ -415,19 +415,6 @@ function looksLikeBotOrBlockedHtml(html, url = '') {
 }
 
 function hasUsefulMetadata(metadata) {
-  const title = String(metadata?.title || '').toLowerCase();
-  const description = String(metadata?.description || '').toLowerCase();
-  const bad = [
-    'access denied',
-    'forbidden',
-    'captcha',
-    'robot check',
-    'verify you are a human',
-    'unusual traffic',
-    'automated access',
-    'blocked'
-  ];
-  if (bad.some((p) => title.includes(p) || description.includes(p))) return false;
   return Boolean(
     metadata?.title ||
       metadata?.description ||
@@ -690,7 +677,7 @@ module.exports = {
 function needsBrowserFetch(url) {
   if (!url) return false;
   const u = url.toLowerCase();
-  return u.includes('blinkit.com') || isAmazonUrl(u) || u.includes('ajio.com');
+  return u.includes('blinkit.com') || isAmazonUrl(u);
 }
 
 /**
@@ -710,7 +697,7 @@ async function fetchHtmlWithBrowser(url) {
       return null;
     }
     try {
-      const launchOptions = { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled'] };
+      const launchOptions = { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] };
       const exePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH || process.env.CHROME_PATH || process.env.CHROMIUM_PATH;
       if (exePath) launchOptions.executablePath = exePath;
       browser = await chromium.launch(launchOptions);
@@ -722,7 +709,7 @@ async function fetchHtmlWithBrowser(url) {
         try {
           const { spawnSync } = require('child_process');
           spawnSync('npx', ['playwright', 'install', 'chromium'], { stdio: 'ignore', timeout: 120000 });
-          const launchOptions = { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled'] };
+          const launchOptions = { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] };
           const exePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH || process.env.CHROME_PATH || process.env.CHROMIUM_PATH;
           if (exePath) launchOptions.executablePath = exePath;
           browser = await chromium.launch(launchOptions);
@@ -744,29 +731,6 @@ async function fetchHtmlWithBrowser(url) {
       viewport: { width: 1366, height: 768 }
     });
     const page = await context.newPage();
-    try {
-      await page.addInitScript(() => {
-        try {
-          Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        } catch {}
-        try {
-          Object.defineProperty(navigator, 'languages', { get: () => ['en-IN', 'en'] });
-        } catch {}
-        try {
-          Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-        } catch {}
-        try {
-          window.chrome = window.chrome || { runtime: {} };
-        } catch {}
-      });
-    } catch {}
-    const host = getHostname(url);
-    if (host.includes('ajio.com')) {
-      try {
-        await page.goto('https://www.ajio.com/', { waitUntil: 'domcontentloaded', timeout: 15000 });
-        try { await page.waitForLoadState('networkidle', { timeout: 5000 }); } catch (_) {}
-      } catch (_) {}
-    }
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
     // Allow some network activity to settle
     try { await page.waitForLoadState('networkidle', { timeout: 5000 }); } catch (_) {}

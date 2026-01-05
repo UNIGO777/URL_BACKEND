@@ -73,36 +73,8 @@ class LambdaController {
       let targetUrl = url;
       try {
         const h = new URL(url).hostname.toLowerCase();
-        if (shorteners.has(h) || h.endsWith('onelink.me')) {
+        if (shorteners.has(h)) {
           targetUrl = await resolveFinalUrl(url);
-        }
-      } catch {}
-
-      try {
-        const u = new URL(targetUrl);
-        const deepKeys = ['deep_link_value', 'af_dp', 'af_web_dp', 'deep_link'];
-        let deep = null;
-        for (const k of deepKeys) {
-          const v = u.searchParams.get(k);
-          if (v) {
-            deep = v;
-            break;
-          }
-        }
-        if (deep) {
-          let decoded = deep;
-          for (let i = 0; i < 2; i++) {
-            try {
-              const d = decodeURIComponent(decoded);
-              if (d === decoded) break;
-              decoded = d;
-            } catch {
-              break;
-            }
-          }
-          if (/^https?:\/\//i.test(decoded)) {
-            targetUrl = decoded;
-          }
         }
       } catch {}
 
@@ -265,7 +237,14 @@ class LambdaController {
       }
 
       // Return direct JSON response instead of Lambda format for better API usability
-      const hasUsefulMeta = hasUsefulMetadata(metadata);
+      const hasUsefulMeta = Boolean(
+          metadata?.title ||
+            metadata?.description ||
+            metadata?.images?.logo ||
+            metadata?.images?.ogImage ||
+            metadata?.images?.favicon ||
+            metadata?.images?.appleTouchIcon
+      ) || isHtmlContent(effectiveResult);
       const upstreamOk = effectiveResult.status >= 200 && effectiveResult.status < 300;
       const htmlText = typeof effectiveResult.data === 'string' ? String(effectiveResult.data) : '';
       const looksError = (looksLikeBotOrBlockedHtml(htmlText, effectiveUrl) && !hasUsefulMeta) || (String(metadata?.title || '').toLowerCase().includes('error'));
