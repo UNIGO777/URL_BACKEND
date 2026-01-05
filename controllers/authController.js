@@ -293,7 +293,7 @@ const requestLoginOTP = async (req, res) => {
       if (!user) {
         return res.status(404).json({
           success: false,
-          message: 'No account found with this identifier. Please register first.'
+          message: 'No account found with this email or phone number, please sign up'
         });
       }
 
