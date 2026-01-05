@@ -33,8 +33,7 @@ const generateHeaders = (url, userAgent) => {
                    userAgent.includes('Linux') ? '"Linux"' : '"Unknown"';
   const isChromiumLike = /Chrome\/|Edg\//.test(userAgent);
   const secChUa = isChromiumLike ? '"Not.A/Brand";v="99", "Chromium";v="120", "Google Chrome";v="120"' : undefined;
-  const secFetchSite = urlObj.hostname && origin.includes(urlObj.hostname) ? 'same-origin' : 'none';
-  const refererVal = hostname.includes('blinkit.com') ? origin : url;
+  const secFetchSite = 'none';
   
   return {
     'User-Agent': userAgent,
@@ -50,8 +49,7 @@ const generateHeaders = (url, userAgent) => {
     'Sec-Fetch-Site': secFetchSite,
     'Sec-Fetch-User': '?1',
     'Cache-Control': 'max-age=0',
-    'Referer': refererVal,
-    'Origin': origin
+    ...(hostname.includes('blinkit.com') ? { 'Referer': origin } : {})
   };
 };
 
@@ -369,9 +367,87 @@ const resolveUrl = (url, baseUrl) => {
  * @returns {boolean} True if content is HTML
  */
 const isHtmlContent = (response) => {
-  const contentType = response.headers['content-type'] || '';
-  return contentType.includes('text/html');
+  const headers = response?.headers || {};
+  const contentType = String(headers['content-type'] || headers['Content-Type'] || '').toLowerCase();
+  return contentType.includes('text/html') || contentType.includes('application/xhtml+xml');
 };
+
+function getHostname(url) {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function isAmazonUrl(url) {
+  const h = getHostname(url);
+  return h === 'amzn.in' || h === 'amzn.to' || h.endsWith('.amazon.com') || h.endsWith('.amazon.in') || h.endsWith('.amazon.ae') || h.endsWith('.amazon.co.uk') || h.endsWith('.amazon.de') || h.endsWith('.amazon.ca') || h.endsWith('.amazon.com.au') || h.endsWith('.amazon.sg') || h.endsWith('.amazon.co.jp') || h.endsWith('.amazon.fr') || h.endsWith('.amazon.it') || h.endsWith('.amazon.es') || h.endsWith('.amazon.com.br') || h.endsWith('.amazon.nl') || h.endsWith('.amazon.com.mx') || h.endsWith('.amazon.se');
+}
+
+function looksLikeBotOrBlockedHtml(html, url = '') {
+  if (!html) return false;
+  const h = String(html).toLowerCase();
+  const patterns = [
+    'captcha',
+    'robot check',
+    'automated access',
+    'access denied',
+    'forbidden',
+    'blocked',
+    'verify you are a human',
+    'unusual traffic',
+    'incapsula',
+    'cloudflare',
+    'datadome',
+    'akamai',
+    '/cdn-cgi/',
+    'please enable cookies',
+    'enter the characters you see below',
+    'type the characters you see in this image',
+    'sorry, we just need to make sure you\'re not a robot',
+  ];
+  if (patterns.some((p) => h.includes(p))) return true;
+  if (isAmazonUrl(url)) {
+    if (h.includes('to discuss automated access') || h.includes('continue shopping') && h.includes('robot')) return true;
+  }
+  return false;
+}
+
+function hasUsefulMetadata(metadata) {
+  return Boolean(
+    metadata?.title ||
+      metadata?.description ||
+      metadata?.images?.logo ||
+      metadata?.images?.ogImage ||
+      metadata?.images?.favicon ||
+      metadata?.images?.appleTouchIcon
+  );
+}
+
+async function resolveFinalUrl(url) {
+  if (!url) return url;
+  try {
+    const userAgent = getRandomUserAgent();
+    const response = await axios({
+      method: 'GET',
+      url,
+      headers: generateHeaders(url, userAgent),
+      timeout: 12000,
+      maxRedirects: 10,
+      validateStatus: () => true,
+      responseType: 'text',
+      transformResponse: [(d) => d],
+    });
+    const finalUrl =
+      response?.request?.res?.responseUrl ||
+      response?.request?._redirectable?._currentUrl ||
+      url;
+    return typeof finalUrl === 'string' && finalUrl.length ? finalUrl : url;
+  } catch {
+    return url;
+  }
+}
 
 /**
  * Classify the type of link based on URL patterns and content analysis
@@ -585,7 +661,11 @@ module.exports = {
   needsPlatformFallback,
   mergeMetadata,
   needsBrowserFetch,
-  fetchHtmlWithBrowser
+  fetchHtmlWithBrowser,
+  looksLikeBotOrBlockedHtml,
+  resolveFinalUrl,
+  isAmazonUrl,
+  hasUsefulMetadata
 };
 
 /**
@@ -597,7 +677,7 @@ module.exports = {
 function needsBrowserFetch(url) {
   if (!url) return false;
   const u = url.toLowerCase();
-  return u.includes('blinkit.com');
+  return u.includes('blinkit.com') || isAmazonUrl(u);
 }
 
 /**
@@ -606,6 +686,7 @@ function needsBrowserFetch(url) {
  * @returns {Promise<{status:number,statusText:string,headers:object,data:string}|null>}
  */
 async function fetchHtmlWithBrowser(url) {
+  let browser;
   try {
     let chromium;
     try {
@@ -615,7 +696,6 @@ async function fetchHtmlWithBrowser(url) {
       console.warn('Playwright not installed; browser fetch unavailable.');
       return null;
     }
-    let browser;
     try {
       const launchOptions = { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] };
       const exePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH || process.env.CHROME_PATH || process.env.CHROMIUM_PATH;
@@ -627,8 +707,8 @@ async function fetchHtmlWithBrowser(url) {
       if (needsInstall && !fetchHtmlWithBrowser.__installAttempted) {
         fetchHtmlWithBrowser.__installAttempted = true;
         try {
-          const { execSync } = require('child_process');
-          execSync('npx playwright install chromium', { stdio: 'ignore' });
+          const { spawnSync } = require('child_process');
+          spawnSync('npx', ['playwright', 'install', 'chromium'], { stdio: 'ignore', timeout: 120000 });
           const launchOptions = { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] };
           const exePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH || process.env.CHROME_PATH || process.env.CHROMIUM_PATH;
           if (exePath) launchOptions.executablePath = exePath;
@@ -640,11 +720,14 @@ async function fetchHtmlWithBrowser(url) {
         return null;
       }
     }
+    const ua = getRandomUserAgent();
+    const extraHeaders = generateHeaders(url, ua);
+    delete extraHeaders['User-Agent'];
     const context = await browser.newContext({
       locale: 'en-IN',
       timezoneId: 'Asia/Kolkata',
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      extraHTTPHeaders: generateHeaders(url, getRandomUserAgent()),
+      userAgent: ua,
+      extraHTTPHeaders: extraHeaders,
       viewport: { width: 1366, height: 768 }
     });
     const page = await context.newPage();
@@ -652,7 +735,6 @@ async function fetchHtmlWithBrowser(url) {
     // Allow some network activity to settle
     try { await page.waitForLoadState('networkidle', { timeout: 5000 }); } catch (_) {}
     const html = await page.content();
-    await browser.close();
     return {
       status: 200,
       statusText: 'OK',
@@ -662,6 +744,10 @@ async function fetchHtmlWithBrowser(url) {
   } catch (err) {
     console.warn('Browser fetch failed:', err?.message || err);
     return null;
+  } finally {
+    try {
+      if (browser) await browser.close();
+    } catch {}
   }
 }
 
