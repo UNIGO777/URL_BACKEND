@@ -17,7 +17,8 @@ const {
   fetchHtmlWithBrowser,
   resolveFinalUrl,
   looksLikeBotOrBlockedHtml,
-  hasUsefulMetadata
+  hasUsefulMetadata,
+  isAmazonUrl
 } = require('../utils/helpers');
 
 /**
@@ -77,74 +78,124 @@ class LambdaController {
         }
       } catch {}
 
-      // Execute request with retry logic
-      const result = await this.executeWithRetry(targetUrl, method, customHeaders, data);
-      
-      let effectiveResult = result;
-      let didBrowserFetch = false;
-      const effectiveUrl = result?.finalUrl || targetUrl;
-      
-      // Extract metadata (images, title, description) if response is HTML
+      const qualityAttempts = 3;
+      let effectiveResult;
+      let effectiveUrl = targetUrl;
       let metadata = null;
-      const effectiveBody = typeof effectiveResult.data === 'string' ? String(effectiveResult.data) : '';
-      const effectiveSeemsHtml = Boolean(
-        effectiveBody &&
-          (isHtmlContent(effectiveResult) ||
-            /<\s*html\b/i.test(effectiveBody) ||
-            /<\s*head\b/i.test(effectiveBody) ||
-            /<\s*title\b/i.test(effectiveBody))
-      );
-      if (effectiveSeemsHtml) {
-        console.log('🖼️  Extracting metadata from HTML content...');
-        metadata = extractMetadata(effectiveBody, effectiveUrl);
-        console.log('📸 Images found:', {
-          logo: metadata.images.logo ? '✅' : '❌',
-          ogImage: metadata.images.ogImage ? '✅' : '❌',
-          favicon: metadata.images.favicon ? '✅' : '❌',
-          appleTouchIcon: metadata.images.appleTouchIcon ? '✅' : '❌'
-        });
-        console.log('📝 Content found:', {
-          title: metadata.title ? '✅' : '❌',
-          description: metadata.description ? '✅' : '❌'
-        });
+      let totalAttempt = 1;
 
-        const blocked = looksLikeBotOrBlockedHtml(effectiveBody, effectiveUrl);
-        const hasMeta = hasUsefulMetadata(metadata);
-        const shouldBrowserFetch = (!hasMeta && blocked) || (!hasMeta && needsBrowserFetch(effectiveUrl));
-        if (!didBrowserFetch && shouldBrowserFetch) {
-          console.log('🧭 Browser fallback: attempting headless fetch...');
-          const browserRes = await fetchHtmlWithBrowser(effectiveUrl);
-          if (browserRes && typeof browserRes.data === 'string' && browserRes.data.length > 0) {
-            effectiveResult = {
-              status: browserRes.status,
-              statusText: browserRes.statusText,
-              headers: browserRes.headers,
-              data: browserRes.data,
-              attempt: (effectiveResult?.attempt || 0) + 1,
-              durationMs: effectiveResult?.durationMs,
-              finalUrl: effectiveUrl
-            };
-            const browserBody = typeof effectiveResult.data === 'string' ? String(effectiveResult.data) : '';
-            metadata = extractMetadata(browserBody, effectiveUrl);
-          }
-        }
+      for (let qualityAttempt = 0; qualityAttempt < qualityAttempts; qualityAttempt++) {
+        const result = await this.executeWithRetry(targetUrl, method, customHeaders, data);
 
-        // Platform-aware fallback: use oEmbed when content looks generic/missing
-        if (needsPlatformFallback(effectiveUrl, metadata)) {
-          console.log('🔁 Using platform oEmbed fallback for richer metadata...');
-          const platformMeta = await fetchPlatformMetadata(effectiveUrl);
-          if (platformMeta) {
-            metadata = mergeMetadata(metadata, platformMeta, effectiveUrl);
-          } else {
-            console.log('⚠️  Platform fallback unavailable or failed.');
-          }
-        }
+        effectiveResult = result;
+        effectiveUrl = result?.finalUrl || targetUrl;
+        totalAttempt = qualityAttempt * MAX_RETRIES + (effectiveResult?.attempt || 1);
+        metadata = null;
 
-        if (!metadata.images.favicon) {
+        const effectiveBody = typeof effectiveResult.data === 'string' ? String(effectiveResult.data) : '';
+        const effectiveSeemsHtml = Boolean(
+          effectiveBody &&
+            (isHtmlContent(effectiveResult) ||
+              /<\s*html\b/i.test(effectiveBody) ||
+              /<\s*head\b/i.test(effectiveBody) ||
+              /<\s*title\b/i.test(effectiveBody))
+        );
+
+        let didBrowserFetch = false;
+        const expectedAmazonProduct = (() => {
+          const candidate = effectiveUrl || targetUrl;
+          if (!isAmazonUrl(candidate)) return false;
           try {
-            const u = new URL(effectiveUrl);
-            metadata.images.favicon = `${u.protocol}//${u.hostname}/favicon.ico`;
-          } catch {}
+            const p = new URL(candidate).pathname || '';
+            return /\/(dp|gp\/product)\/[a-z0-9]{10}/i.test(p);
+          } catch {
+            return /\/(dp|gp\/product)\/[a-z0-9]{10}/i.test(String(candidate));
+          }
+        })();
+
+        const isAmazonProductOk = (m, html) => {
+          if (!expectedAmazonProduct) return true;
+          const title = String(m?.title || '').trim().toLowerCase();
+          if (!title) return false;
+          if (title === 'amazon.in' || title === 'amazon') return false;
+          if (title.includes('robot') || title.includes('captcha') || title.includes('access denied') || title.includes('forbidden')) return false;
+          const og = String(m?.images?.ogImage || '').toLowerCase();
+          const ogOk = /m\.media-amazon\.com|images-na\.ssl-images-amazon\.com|images-eu\.ssl-images-amazon\.com/.test(og);
+          const h = String(html || '').toLowerCase();
+          const htmlOk = h.includes('producttitle') || h.includes('data-asin') || h.includes('add-to-cart') || h.includes('acrcustomerreviewtext');
+          return ogOk && htmlOk;
+        };
+
+        if (effectiveSeemsHtml) {
+          console.log('🖼️  Extracting metadata from HTML content...');
+          metadata = extractMetadata(effectiveBody, effectiveUrl);
+          console.log('📸 Images found:', {
+            logo: metadata.images.logo ? '✅' : '❌',
+            ogImage: metadata.images.ogImage ? '✅' : '❌',
+            favicon: metadata.images.favicon ? '✅' : '❌',
+            appleTouchIcon: metadata.images.appleTouchIcon ? '✅' : '❌'
+          });
+          console.log('📝 Content found:', {
+            title: metadata.title ? '✅' : '❌',
+            description: metadata.description ? '✅' : '❌'
+          });
+
+          const hasMeta = hasUsefulMetadata(metadata);
+          const blocked = looksLikeBotOrBlockedHtml(effectiveBody, effectiveUrl);
+          const amazonOk = isAmazonProductOk(metadata, effectiveBody);
+          const shouldBrowserFetch = (!hasMeta && blocked) || (!hasMeta && needsBrowserFetch(effectiveUrl)) || (expectedAmazonProduct && !amazonOk);
+
+          if (!didBrowserFetch && shouldBrowserFetch) {
+            console.log('🧭 Browser fallback: attempting headless fetch...');
+            const browserRes = await fetchHtmlWithBrowser(effectiveUrl);
+            if (browserRes && typeof browserRes.data === 'string' && browserRes.data.length > 0) {
+              effectiveResult = {
+                status: browserRes.status,
+                statusText: browserRes.statusText,
+                headers: browserRes.headers,
+                data: browserRes.data,
+                attempt: (effectiveResult?.attempt || 0) + 1,
+                durationMs: effectiveResult?.durationMs,
+                finalUrl: effectiveUrl
+              };
+              didBrowserFetch = true;
+              const browserBody = typeof effectiveResult.data === 'string' ? String(effectiveResult.data) : '';
+              metadata = extractMetadata(browserBody, effectiveUrl);
+            }
+          }
+
+          if (needsPlatformFallback(effectiveUrl, metadata)) {
+            console.log('🔁 Using platform oEmbed fallback for richer metadata...');
+            const platformMeta = await fetchPlatformMetadata(effectiveUrl);
+            if (platformMeta) {
+              metadata = mergeMetadata(metadata, platformMeta, effectiveUrl);
+            } else {
+              console.log('⚠️  Platform fallback unavailable or failed.');
+            }
+          }
+
+          if (!metadata.images.favicon) {
+            try {
+              const u = new URL(effectiveUrl);
+              metadata.images.favicon = `${u.protocol}//${u.hostname}/favicon.ico`;
+            } catch {}
+          }
+
+          const finalBody = typeof effectiveResult.data === 'string' ? String(effectiveResult.data) : effectiveBody;
+          const finalAmazonOk = isAmazonProductOk(metadata, finalBody);
+          const finalHasMeta = hasUsefulMetadata(metadata);
+          const finalBlocked = looksLikeBotOrBlockedHtml(finalBody, effectiveUrl);
+          const qualityOk = expectedAmazonProduct ? finalAmazonOk : (finalHasMeta && !(finalBlocked && !finalHasMeta));
+
+          if (qualityOk) break;
+        } else {
+          break;
+        }
+
+        if (qualityAttempt < qualityAttempts - 1) {
+          const delay = calculateBackoffDelay(qualityAttempt);
+          console.log(`⏳ Retrying for better metadata. Waiting ${delay}ms...`);
+          await sleep(delay);
         }
       }
       
@@ -172,7 +223,7 @@ class LambdaController {
           method: method.toUpperCase(),
           contentType: (effectiveResult.headers && (effectiveResult.headers['content-type'] || effectiveResult.headers['Content-Type'])) || '',
           responseTime: effectiveResult.durationMs,
-          attempt: effectiveResult.attempt
+          attempt: totalAttempt
         }
         // headers: result.headers,
         // data: result.data
@@ -193,7 +244,7 @@ class LambdaController {
             metadata?.images?.ogImage ||
             metadata?.images?.favicon ||
             metadata?.images?.appleTouchIcon
-      ) || isHtmlContent(result);
+      ) || isHtmlContent(effectiveResult);
       const upstreamOk = effectiveResult.status >= 200 && effectiveResult.status < 300;
       const htmlText = typeof effectiveResult.data === 'string' ? String(effectiveResult.data) : '';
       const looksError = (looksLikeBotOrBlockedHtml(htmlText, effectiveUrl) && !hasUsefulMeta) || (String(metadata?.title || '').toLowerCase().includes('error'));
@@ -203,7 +254,7 @@ class LambdaController {
       res.status(httpStatus).json({
         success: clientSuccess,
         data: responseData,
-        attempt: effectiveResult.attempt,
+        attempt: totalAttempt,
         timestamp: new Date().toISOString()
       });
 
