@@ -71,16 +71,38 @@ otpSchema.statics.createOTP = async function(identifier, type) {
 otpSchema.statics.verifyOTP = async function(identifier, otp, type) {
   const normalizedIdentifier = String(identifier || '').trim().toLowerCase();
   const normalizedOtp = String(otp || '').trim();
-  const otpDoc = await this.findOne({
+  const now = new Date();
+
+  const baseQuery = {
     identifier: normalizedIdentifier,
-    otp: normalizedOtp,
-    type,
+    otp: normalizedOtp
+  };
+
+  const allowedFallbackTypes = new Set(['registration', 'login']);
+  const shouldFallbackType = allowedFallbackTypes.has(type);
+  const typeQuery = shouldFallbackType ? { $in: ['registration', 'login'] } : type;
+
+  const otpDoc = await this.findOne({
+    ...baseQuery,
+    type: typeQuery,
     isUsed: false,
-    expiresAt: { $gt: new Date() }
-  });
+    expiresAt: { $gt: now }
+  }).sort({ createdAt: -1 });
 
   if (!otpDoc) {
-    return { success: false, message: 'Invalid or expired OTP' };
+    const lastOtpDoc = await this.findOne({
+      ...baseQuery,
+      type: typeQuery
+    }).sort({ createdAt: -1 });
+
+    if (lastOtpDoc) {
+      if (lastOtpDoc.isUsed) return { success: false, message: 'OTP already used. Please request a new OTP.' };
+      if (lastOtpDoc.expiresAt && lastOtpDoc.expiresAt <= now) {
+        return { success: false, message: 'OTP expired. Please request a new OTP.' };
+      }
+    }
+
+    return { success: false, message: 'Invalid OTP' };
   }
 
   if (otpDoc.attempts >= 3) {
