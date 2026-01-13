@@ -222,7 +222,11 @@ const authRateLimit = rateLimit({
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
   skip: (req) => {
-    // Skip rate limiting for certain conditions if needed
+    const path = req.path || '';
+    if (path === '/register') return true;
+    if (path === '/verify-otp') return true;
+    if (path === '/resend-otp') return true;
+    if (path.startsWith('/login/')) return true;
     return false;
   }
 });

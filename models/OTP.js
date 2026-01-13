@@ -52,13 +52,14 @@ otpSchema.statics.generateOTP = function() {
 
 // Static method to create and save OTP
 otpSchema.statics.createOTP = async function(identifier, type) {
+  const normalizedIdentifier = String(identifier || '').trim().toLowerCase();
   // Delete any existing OTP for this identifier and type
-  await this.deleteMany({ identifier, type });
+  await this.deleteMany({ identifier: normalizedIdentifier, type });
   
   const otp = this.generateOTP();
   const otpDoc = new this({
-    identifier,
-    otp,
+    identifier: normalizedIdentifier,
+    otp: String(otp).trim(),
     type
   });
   
@@ -68,9 +69,11 @@ otpSchema.statics.createOTP = async function(identifier, type) {
 
 // Static method to verify OTP
 otpSchema.statics.verifyOTP = async function(identifier, otp, type) {
+  const normalizedIdentifier = String(identifier || '').trim().toLowerCase();
+  const normalizedOtp = String(otp || '').trim();
   const otpDoc = await this.findOne({
-    identifier,
-    otp,
+    identifier: normalizedIdentifier,
+    otp: normalizedOtp,
     type,
     isUsed: false,
     expiresAt: { $gt: new Date() }
@@ -93,8 +96,9 @@ otpSchema.statics.verifyOTP = async function(identifier, otp, type) {
 
 // Static method to increment attempts
 otpSchema.statics.incrementAttempts = async function(identifier, type) {
+  const normalizedIdentifier = String(identifier || '').trim().toLowerCase();
   await this.updateOne(
-    { identifier, type, isUsed: false },
+    { identifier: normalizedIdentifier, type, isUsed: false },
     { $inc: { attempts: 1 } }
   );
 };

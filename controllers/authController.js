@@ -130,8 +130,12 @@ const verifyOTP = async (req, res) => {
       });
     }
 
+    const allowedTypes = new Set(['registration', 'login', 'password_reset', 'email_verification', 'identifier_change']);
+    const requestedType = typeof type === 'string' ? type : '';
+    const otpType = allowedTypes.has(requestedType) ? requestedType : 'registration';
+
     // Verify OTP
-    const isValidOTP = await OTP.verifyOTP(identifier, otp, type);
+    const isValidOTP = await OTP.verifyOTP(identifier, otp, otpType);
 
     if (!isValidOTP.success) {
       return res.status(400).json({
@@ -153,7 +157,7 @@ const verifyOTP = async (req, res) => {
     user.identifierVerified = true;
 
     // Complete registration for verified users
-    if (type === 'registration') {
+    if (otpType === 'registration') {
       user.registrationStep = 'completed';
     }
 
@@ -220,16 +224,20 @@ const resendOTP = async (req, res) => {
       });
     }
 
+    const allowedTypes = new Set(['registration', 'login', 'password_reset', 'email_verification', 'identifier_change']);
+    const requestedType = typeof type === 'string' ? type : '';
+    const otpType = allowedTypes.has(requestedType) ? requestedType : 'registration';
+
     // Generate new OTP
-    const newOTP = await OTP.createOTP(identifier, type);
+    const newOTP = await OTP.createOTP(identifier, otpType);
     
     // Send OTP based on identifier type
     let sent = false;
 
     if (user.identifierType === 'email') {
-      sent = await sendOTPEmail(identifier, newOTP, type);
+      sent = await sendOTPEmail(identifier, newOTP, otpType);
     } else if (user.identifierType === 'phone') {
-      sent = await sendOTPSMS(identifier, newOTP, type);
+      sent = await sendOTPSMS(identifier, newOTP, otpType);
     }
 
     if (!sent) {
