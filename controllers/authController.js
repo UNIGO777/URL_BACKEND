@@ -122,6 +122,8 @@ const verifyOTP = async (req, res) => {
   try {
     const { identifier, otp, type = 'registration' } = req.body;
 
+    console.log('Request Body:', req.body , identifier, otp, type);
+
     // Validate input
     if (!identifier || !otp) {
       return res.status(400).json({
