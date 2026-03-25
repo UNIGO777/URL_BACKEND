@@ -1,51 +1,56 @@
-
+const axios = require('axios');
 
 /**
- * Format phone number to international format
+ * Format phone number for Fast2SMS
  * @param {string} phone - Phone number
- * @param {string} countryCode - Country code (default: +1 for US)
+ * @param {string} countryCode - Country code prefix (default: 91 for India)
  * @returns {string} - Formatted phone number
  */
-const formatPhoneNumber = (phone, countryCode = '+1') => {
-  // Remove all non-digit characters
+const formatPhoneNumber = (phone, countryCode = '91') => {
   const cleanPhone = phone.replace(/\D/g, '');
-  
-  // If phone already starts with country code, return as is
-  if (cleanPhone.startsWith('1') && cleanPhone.length === 11) {
-    return `+${cleanPhone}`;
-  }
-  
-  // If phone is 10 digits, add country code
+
   if (cleanPhone.length === 10) {
-    return `${countryCode}${cleanPhone}`;
+    return cleanPhone;
   }
-  
-  // If phone already has country code format
-  if (phone.startsWith('+')) {
-    return phone;
+
+  if (cleanPhone.startsWith(countryCode) && cleanPhone.length === countryCode.length + 10) {
+    return cleanPhone.slice(-10);
   }
-  
-  return `${countryCode}${cleanPhone}`;
+
+  if (cleanPhone.length > 10) {
+    return cleanPhone.slice(-10);
+  }
+
+  return cleanPhone;
 };
 
 
 const sendOTPSMS = async (phone, otp, type = 'verification') => {
   try {
-    
-    // Format phone number
-    const formattedPhone = formatPhoneNumber(phone);
+    const apiKey = process.env.FAST2SMS_API_KEY || process.env.OTP_SMS_API_KEY;
+    const messageId = process.env.FAST2SMS_MESSAGE_ID || process.env.MASSAGE_ID || '2898';
 
-    console.log(`SMS sent successfully to ${formattedPhone} OTP: ${otp}`);
+    if (!apiKey) {
+      throw new Error('FAST2SMS API key is not configured');
+    }
+
+    const formattedPhone = formatPhoneNumber(phone);
+    const apiUrl = `https://www.fast2sms.com/dev/whatsapp?authorization=${apiKey}&message_id=${messageId}&numbers=${formattedPhone}&variables_values=${otp}`;
+    const response = await axios.get(apiUrl);
+
+    console.log(`SMS sent successfully to ${formattedPhone} for ${type}`, response.data);
     return true;
-    
   } catch (error) {
     console.error('Error sending SMS:', error);
-    
-    // Log specific Twilio errors
-    if (error.code) {
-      console.error(`Twilio Error Code: ${error.code} - ${error.message}`);
+
+    if (error.response) {
+      console.error('Fast2SMS Error Response:', error.response.data);
     }
-    
+
+    if (error.code) {
+      console.error(`Fast2SMS Error Code: ${error.code} - ${error.message}`);
+    }
+
     return false;
   }
 };
