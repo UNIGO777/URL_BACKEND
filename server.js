@@ -6,6 +6,7 @@ const helmet = require('helmet');
 const passport = require('passport');
 const session = require('express-session');
 const os = require('os');
+const User = require('./models/User');
 
 // Import configuration
 const { PORT, MESSAGES } = require('./config/constants');
@@ -56,6 +57,42 @@ const { specs, swaggerUi, swaggerOptions } = require('./config/swagger');
 
 // Initialize Express app
 const app = express();
+
+const isPlayReviewModeEnabled = () => String(process.env.PLAY_REVIEW_MODE || '').trim().toLowerCase() === 'true';
+const getPlayReviewPhone = () => String(process.env.PLAY_REVIEW_PHONE || process.env.PLAY_REVIEW_TEST_PHONE || '').replace(/\D/g, '');
+
+const ensurePlayReviewUser = async () => {
+  if (!isPlayReviewModeEnabled()) return null;
+
+  const identifier = getPlayReviewPhone();
+  if (!identifier) {
+    console.warn('⚠️ PLAY_REVIEW_MODE is enabled but PLAY_REVIEW_PHONE is missing.');
+    return null;
+  }
+
+  const user = await User.findOneAndUpdate(
+    { identifier },
+    {
+      $set: {
+        fullName: process.env.PLAY_REVIEW_FULL_NAME || 'Play Review User',
+        ageGroup: process.env.PLAY_REVIEW_AGE_GROUP || '25-34',
+        identifierType: 'phone',
+        identifierVerified: true,
+        registrationStep: 'completed',
+        isActive: true
+      }
+    },
+    {
+      upsert: true,
+      new: true,
+      setDefaultsOnInsert: true,
+      runValidators: true
+    }
+  );
+
+  console.log(`🧪 Play review user ready: ${identifier}`);
+  return user;
+};
 
 // Security middleware
 app.use(helmet());
@@ -108,6 +145,7 @@ const startServer = async () => {
   try {
     // Connect to MongoDB
     await connectDB();
+    await ensurePlayReviewUser();
     
     // Start server
     app.listen(PORT, HOST, () => {

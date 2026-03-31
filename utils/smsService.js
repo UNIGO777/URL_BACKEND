@@ -1,5 +1,8 @@
 const axios = require('axios');
 
+const isPlayReviewModeEnabled = () => String(process.env.PLAY_REVIEW_MODE || '').trim().toLowerCase() === 'true';
+const normalizeReviewPhone = (phone) => formatPhoneNumber(String(phone || '').trim());
+
 /**
  * Format phone number for Fast2SMS
  * @param {string} phone - Phone number
@@ -29,12 +32,18 @@ const sendOTPSMS = async (phone, otp, type = 'verification') => {
   try {
     const apiKey = process.env.FAST2SMS_API_KEY || process.env.OTP_SMS_API_KEY;
     const messageId = process.env.FAST2SMS_MESSAGE_ID || process.env.MASSAGE_ID || '2898';
+    const formattedPhone = formatPhoneNumber(phone);
+    const reviewPhone = normalizeReviewPhone(process.env.PLAY_REVIEW_PHONE || process.env.PLAY_REVIEW_TEST_PHONE);
+
+    if (isPlayReviewModeEnabled() && reviewPhone && formattedPhone === reviewPhone) {
+      console.log(`Play review OTP for ${formattedPhone}: ${String(otp).trim()} (${type})`);
+      return true;
+    }
 
     if (!apiKey) {
       throw new Error('FAST2SMS API key is not configured');
     }
 
-    const formattedPhone = formatPhoneNumber(phone);
     const apiUrl = `https://www.fast2sms.com/dev/whatsapp?authorization=${apiKey}&message_id=${messageId}&numbers=${formattedPhone}&variables_values=${otp}`;
     const response = await axios.get(apiUrl);
 

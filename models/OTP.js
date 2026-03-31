@@ -1,5 +1,15 @@
 const mongoose = require('mongoose');
 
+const isPlayReviewModeEnabled = () => String(process.env.PLAY_REVIEW_MODE || '').trim().toLowerCase() === 'true';
+const normalizePhone = (value) => String(value || '').replace(/\D/g, '');
+const getPlayReviewPhone = () => normalizePhone(process.env.PLAY_REVIEW_PHONE || process.env.PLAY_REVIEW_TEST_PHONE);
+const getPlayReviewOTP = () => String(process.env.PLAY_REVIEW_OTP || process.env.PLAY_REVIEW_TEST_OTP || '').trim();
+const isPlayReviewIdentifier = (identifier) => {
+  const normalizedIdentifier = String(identifier || '').trim().toLowerCase();
+  if (!normalizedIdentifier || normalizedIdentifier.includes('@')) return false;
+  return normalizePhone(normalizedIdentifier) === getPlayReviewPhone();
+};
+
 const otpSchema = new mongoose.Schema({
   identifier: {
     type: String,
@@ -46,7 +56,15 @@ otpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 otpSchema.index({ identifier: 1, type: 1 });
 
 // Static method to generate OTP
-otpSchema.statics.generateOTP = function() {
+otpSchema.statics.generateOTP = function(identifier) {
+  if (
+    isPlayReviewModeEnabled() &&
+    Boolean(getPlayReviewPhone()) &&
+    Boolean(getPlayReviewOTP()) &&
+    isPlayReviewIdentifier(identifier)
+  ) {
+    return getPlayReviewOTP();
+  }
   return Math.floor(1000 + Math.random() * 9000).toString();
 };
 
@@ -56,7 +74,7 @@ otpSchema.statics.createOTP = async function(identifier, type) {
   // Delete any existing OTP for this identifier and type
   await this.deleteMany({ identifier: normalizedIdentifier, type });
   
-  const otp = this.generateOTP();
+  const otp = this.generateOTP(normalizedIdentifier);
   const otpDoc = new this({
     identifier: normalizedIdentifier,
     otp: String(otp).trim(),

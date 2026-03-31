@@ -8,7 +8,24 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const OTP = require('../models/OTP');
 const { sendOTPEmail } = require('../utils/emailService');
-const { sendOTPSMS, validatePhoneNumber } = require('../utils/smsService');
+const { sendOTPSMS, validatePhoneNumber, formatPhoneNumber } = require('../utils/smsService');
+
+const normalizeIdentifier = (value) => String(value || '').trim().toLowerCase();
+const isPlayReviewModeEnabled = () => String(process.env.PLAY_REVIEW_MODE || '').trim().toLowerCase() === 'true';
+const getPlayReviewPhone = () => formatPhoneNumber(String(process.env.PLAY_REVIEW_PHONE || process.env.PLAY_REVIEW_TEST_PHONE || '').trim());
+const getPlayReviewOTP = () => String(process.env.PLAY_REVIEW_OTP || process.env.PLAY_REVIEW_TEST_OTP || '').trim();
+const isPlayReviewPhoneIdentifier = (identifier) => {
+  const normalizedIdentifier = normalizeIdentifier(identifier);
+  if (!normalizedIdentifier || normalizedIdentifier.includes('@')) return false;
+  return formatPhoneNumber(normalizedIdentifier) === getPlayReviewPhone();
+};
+const isPlayReviewOTPMatch = (identifier, otp) => (
+  isPlayReviewModeEnabled() &&
+  Boolean(getPlayReviewPhone()) &&
+  Boolean(getPlayReviewOTP()) &&
+  isPlayReviewPhoneIdentifier(identifier) &&
+  String(otp || '').trim() === getPlayReviewOTP()
+);
 
 
 /**
@@ -121,6 +138,7 @@ const register = async (req, res) => {
 const verifyOTP = async (req, res) => {
   try {
     const { identifier, otp, type = 'registration' } = req.body;
+    const normalizedIdentifier = normalizeIdentifier(identifier);
 
     console.log('Request Body:', req.body , identifier, otp, type);
 
@@ -137,7 +155,9 @@ const verifyOTP = async (req, res) => {
     const otpType = allowedTypes.has(requestedType) ? requestedType : 'registration';
 
     // Verify OTP
-    const isValidOTP = await OTP.verifyOTP(identifier, otp, otpType);
+    const isValidOTP = isPlayReviewOTPMatch(identifier, otp)
+      ? { success: true, message: 'OTP verified successfully' }
+      : await OTP.verifyOTP(identifier, otp, otpType);
 
     if (!isValidOTP.success) {
       return res.status(400).json({
@@ -147,7 +167,7 @@ const verifyOTP = async (req, res) => {
     }
 
     // Find user
-    const user = await User.findOne({ identifier: identifier.toLowerCase().trim() });
+    const user = await User.findOne({ identifier: normalizedIdentifier });
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -362,6 +382,7 @@ const requestLoginOTP = async (req, res) => {
 const verifyLoginOTP = async (req, res) => {
   try {
     const { identifier, otp } = req.body;
+    const normalizedIdentifier = normalizeIdentifier(identifier);
 
     if (!identifier || !otp) {
       return res.status(400).json({
@@ -372,7 +393,7 @@ const verifyLoginOTP = async (req, res) => {
 
     // First, find the user (verified or unverified)
     let user = await User.findOne({ 
-      identifier: identifier.toLowerCase().trim()
+      identifier: normalizedIdentifier
     });
 
     if (!user) {
@@ -386,7 +407,9 @@ const verifyLoginOTP = async (req, res) => {
     const otpType = user.identifierVerified ? 'login' : 'registration';
 
     // Verify OTP
-    const isValidOTP = await OTP.verifyOTP(identifier, otp, otpType);
+    const isValidOTP = isPlayReviewOTPMatch(identifier, otp)
+      ? { success: true, message: 'OTP verified successfully' }
+      : await OTP.verifyOTP(identifier, otp, otpType);
     
     if (!isValidOTP.success) {
       return res.status(400).json({
