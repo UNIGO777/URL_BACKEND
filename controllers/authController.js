@@ -9,6 +9,7 @@ const User = require('../models/User');
 const OTP = require('../models/OTP');
 const { sendOTPEmail } = require('../utils/emailService');
 const { sendOTPSMS, validatePhoneNumber, formatPhoneNumber } = require('../utils/smsService');
+const { ensureDefaultLinksForUser } = require('../utils/helpers');
 
 const normalizeIdentifier = (value) => String(value || '').trim().toLowerCase();
 const isPlayReviewModeEnabled = () => String(process.env.PLAY_REVIEW_MODE || '').trim().toLowerCase() === 'true';
@@ -176,6 +177,7 @@ const verifyOTP = async (req, res) => {
     }
 
     // Update verification status
+    const wasVerifiedBefore = Boolean(user.identifierVerified);
     user.identifierVerified = true;
 
     // Complete registration for verified users
@@ -184,6 +186,10 @@ const verifyOTP = async (req, res) => {
     }
 
     await user.save();
+
+    if (!wasVerifiedBefore && user.registrationStep === 'completed') {
+      await ensureDefaultLinksForUser(user._id);
+    }
 
     // Generate JWT token for verified users
     let token = null;
@@ -419,6 +425,7 @@ const verifyLoginOTP = async (req, res) => {
     }
 
     // If user was unverified, complete the verification process
+    const wasVerifiedBefore = Boolean(user.identifierVerified);
     if (!user.identifierVerified) {
       user.identifierVerified = true;
       user.registrationStep = 'completed';
@@ -432,6 +439,10 @@ const verifyLoginOTP = async (req, res) => {
     user.lastLogin = new Date();
     user.LastActive = new Date();
     await user.save();
+
+    if (!wasVerifiedBefore && user.registrationStep === 'completed') {
+      await ensureDefaultLinksForUser(user._id);
+    }
 
     const message = user.identifierVerified && otpType === 'registration' 
       ? 'Account verified and login successful' 

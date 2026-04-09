@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 const passport = require('passport');
 const User = require('../models/User');
 const { OAuth2Client } = require('google-auth-library');
+const { ensureDefaultLinksForUser } = require('../utils/helpers');
 
 // Initialize Google OAuth client
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -96,6 +97,7 @@ const googleLogin = async (req, res) => {
           ageGroup: 'Not specified' // Default value, can be updated later
         });
         await user.save();
+        await ensureDefaultLinksForUser(user._id);
         isNewUser = true;
       }
     }
@@ -610,6 +612,7 @@ const completeGoogleAuth = async (req, res) => {
     });
 
     await newUser.save();
+    await ensureDefaultLinksForUser(newUser._id);
 
     // Generate JWT token
     const token = newUser.generateAuthToken();

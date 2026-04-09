@@ -6,6 +6,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { OAuth2Client } = require('google-auth-library');
+const { ensureDefaultLinksForUser } = require('../utils/helpers');
 
 // Initialize Google OAuth client for Web (for web testing)
 const googleMobileClient = new OAuth2Client(
@@ -200,6 +201,7 @@ const completeReactNativeGoogleRegistration = async (req, res) => {
     });
 
     await user.save();
+    await ensureDefaultLinksForUser(user._id);
 
     // Generate JWT token
     const token = user.generateAuthToken();

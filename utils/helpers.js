@@ -1,6 +1,13 @@
 const { USER_AGENTS } = require('../config/constants');
 const cheerio = require('cheerio');
 const axios = require('axios');
+const Link = require('../models/Links');
+const { normalizeUrl } = require('./url');
+
+const DEFAULT_ACCOUNT_LINKS = [
+  'https://www.instagram.com/p/DVkv7YVgYtY/?utm_source=ig_web_copy_link&igsh=MzRlODBiNWFlZA==',
+  'https://youtube.com/shorts/6leoO8juNqU?feature=share'
+];
 
 /**
  * Sleep function for adding delays
@@ -646,6 +653,194 @@ const classifyLinkType = (url, title = '', description = '', html = '') => {
   return 'other';
 };
 
+async function fetchLinkPreviewData(rawUrl) {
+  const originalUrl = normalizeUrl(rawUrl);
+  let effectiveUrl = originalUrl;
+  let metadata = {
+    images: {
+      logo: null,
+      ogImage: null,
+      favicon: null,
+      appleTouchIcon: null
+    },
+    title: null,
+    description: null
+  };
+  let html = '';
+  let status = 200;
+  let statusText = 'OK';
+  let contentType = '';
+  let responseTime = 0;
+  let attempt = 1;
+
+  try {
+    const startedAt = Date.now();
+    const userAgent = getRandomUserAgent();
+    const response = await axios({
+      method: 'GET',
+      url: originalUrl,
+      headers: generateHeaders(originalUrl, userAgent),
+      timeout: 12000,
+      maxRedirects: 10,
+      validateStatus: () => true,
+      responseType: 'text',
+      transformResponse: [(data) => data],
+    });
+
+    responseTime = Date.now() - startedAt;
+    status = response?.status || 200;
+    statusText = response?.statusText || 'OK';
+    contentType = response?.headers?.['content-type'] || response?.headers?.['Content-Type'] || '';
+    html = typeof response?.data === 'string' ? String(response.data) : '';
+    effectiveUrl =
+      response?.request?.res?.responseUrl ||
+      response?.request?._redirectable?._currentUrl ||
+      await resolveFinalUrl(originalUrl) ||
+      originalUrl;
+
+    if (html && isHtmlContent(response)) {
+      metadata = extractMetadata(html, effectiveUrl);
+    }
+
+    const shouldUseBrowser =
+      !hasUsefulMetadata(metadata) &&
+      (looksLikeBotOrBlockedHtml(html, effectiveUrl) || needsBrowserFetch(effectiveUrl));
+
+    if (shouldUseBrowser) {
+      const browserResponse = await fetchHtmlWithBrowser(effectiveUrl);
+      if (browserResponse && typeof browserResponse.data === 'string' && browserResponse.data.length > 0) {
+        attempt += 1;
+        html = String(browserResponse.data);
+        status = browserResponse.status || status;
+        statusText = browserResponse.statusText || statusText;
+        contentType = browserResponse?.headers?.['content-type'] || browserResponse?.headers?.['Content-Type'] || contentType;
+        metadata = extractMetadata(html, effectiveUrl);
+      }
+    }
+
+    if (needsPlatformFallback(effectiveUrl, metadata)) {
+      const platformMetadata = await fetchPlatformMetadata(effectiveUrl);
+      if (platformMetadata) {
+        metadata = mergeMetadata(metadata, platformMetadata, effectiveUrl);
+      }
+    }
+  } catch (_) {
+    try {
+      effectiveUrl = await resolveFinalUrl(originalUrl);
+    } catch (_) {}
+  }
+
+  if (!metadata.images.favicon) {
+    try {
+      const urlObject = new URL(effectiveUrl);
+      metadata.images.favicon = `${urlObject.protocol}//${urlObject.hostname}/favicon.ico`;
+    } catch (_) {}
+  }
+
+  const linkType = classifyLinkType(
+    effectiveUrl,
+    metadata?.title || '',
+    metadata?.description || '',
+    html
+  );
+
+  return {
+    url: effectiveUrl,
+    originalUrl,
+    linkType,
+    title: metadata?.title || null,
+    description: metadata?.description || null,
+    images: {
+      logo: metadata?.images?.logo || null,
+      ogImage: metadata?.images?.ogImage || null,
+      favicon: metadata?.images?.favicon || null,
+      appleTouchIcon: metadata?.images?.appleTouchIcon || null
+    },
+    metadata: {
+      domain: (() => {
+        try {
+          return new URL(effectiveUrl).hostname;
+        } catch (_) {
+          return '';
+        }
+      })(),
+      statusCode: status,
+      statusText,
+      method: 'GET',
+      contentType,
+      responseTime,
+      attempt
+    }
+  };
+}
+
+async function ensureDefaultLinksForUser(userId) {
+  if (!userId) return [];
+
+  const insertedUrls = [];
+
+  for (const defaultUrl of DEFAULT_ACCOUNT_LINKS) {
+    try {
+      const linkPayload = await fetchLinkPreviewData(defaultUrl);
+      const normalizedUrl = normalizeUrl(linkPayload.url || defaultUrl);
+      const normalizedOriginalUrl = linkPayload.originalUrl ? normalizeUrl(linkPayload.originalUrl) : normalizedUrl;
+      const baseForImages = (() => {
+        try {
+          return new URL(normalizedUrl).origin;
+        } catch (_) {
+          return normalizedUrl;
+        }
+      })();
+      const sanitizeImage = (value) => {
+        if (!value) return undefined;
+        const resolved = resolveUrl(value, baseForImages);
+        if (!resolved) return undefined;
+        return /^(https?):\/\/[^\s/$.?#].[^\s]*$/i.test(resolved) ? resolved : undefined;
+      };
+
+      const result = await Link.updateOne(
+        {
+          userId,
+          url: normalizedUrl,
+          isActive: true
+        },
+        {
+          $setOnInsert: {
+            userId,
+            url: normalizedUrl,
+            originalUrl: normalizedOriginalUrl,
+            linkType: linkPayload.linkType || 'other',
+            title: linkPayload.title || undefined,
+            description: linkPayload.description || undefined,
+            images: {
+              logo: sanitizeImage(linkPayload?.images?.logo),
+              ogImage: sanitizeImage(linkPayload?.images?.ogImage),
+              favicon: sanitizeImage(linkPayload?.images?.favicon),
+              appleTouchIcon: sanitizeImage(linkPayload?.images?.appleTouchIcon)
+            },
+            metadata: linkPayload.metadata || {},
+            tags: [],
+            tagsNormalized: [],
+            isFavorite: false,
+            isActive: true
+          }
+        },
+        {
+          upsert: true
+        }
+      );
+
+      if (result?.upsertedCount) {
+        insertedUrls.push(normalizedUrl);
+      }
+    } catch (error) {
+      console.error('Default link seed failed:', defaultUrl, error.message);
+    }
+  }
+
+  return insertedUrls;
+}
+
 module.exports = {
   sleep,
   getRandomUserAgent,
@@ -665,7 +860,9 @@ module.exports = {
   looksLikeBotOrBlockedHtml,
   resolveFinalUrl,
   isAmazonUrl,
-  hasUsefulMetadata
+  hasUsefulMetadata,
+  fetchLinkPreviewData,
+  ensureDefaultLinksForUser
 };
 
 /**
