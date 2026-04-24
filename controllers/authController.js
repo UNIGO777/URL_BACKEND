@@ -235,6 +235,7 @@ const verifyOTP = async (req, res) => {
 const resendOTP = async (req, res) => {
   try {
     const { identifier, type = 'registration' } = req.body;
+    const normalizedIdentifier = normalizeIdentifier(identifier);
 
     if (!identifier) {
       return res.status(400).json({
@@ -244,7 +245,7 @@ const resendOTP = async (req, res) => {
     }
 
     // Check if user exists
-    const user = await User.findOne({ identifier: identifier.toLowerCase().trim() });
+    const user = await User.findOne({ identifier: normalizedIdentifier });
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -257,15 +258,15 @@ const resendOTP = async (req, res) => {
     const otpType = allowedTypes.has(requestedType) ? requestedType : 'registration';
 
     // Generate new OTP
-    const newOTP = await OTP.createOTP(identifier, otpType);
+    const newOTP = await OTP.createOTP(normalizedIdentifier, otpType);
     
     // Send OTP based on identifier type
     let sent = false;
 
     if (user.identifierType === 'email') {
-      sent = await sendOTPEmail(identifier, newOTP, otpType);
+      sent = await sendOTPEmail(normalizedIdentifier, newOTP, otpType);
     } else if (user.identifierType === 'phone') {
-      sent = await sendOTPSMS(identifier, newOTP, otpType);
+      sent = await sendOTPSMS(normalizedIdentifier, newOTP, otpType);
     }
 
     if (!sent) {
@@ -279,8 +280,9 @@ const resendOTP = async (req, res) => {
       success: true,
       message: `OTP sent successfully to your ${user.identifierType}`,
       data: {
-        identifier,
-        type: user.identifierType
+        identifier: normalizedIdentifier,
+        identifierType: user.identifierType,
+        otpType
       }
     });
 

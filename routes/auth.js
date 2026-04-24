@@ -145,8 +145,8 @@ router.post('/verify-otp', authRateLimit, authController.verifyOTP);
  * /api/auth/resend-otp:
  *   post:
  *     tags: [Authentication]
- *     summary: Resend OTP for registration
- *     description: Resend OTP code for registration verification
+ *     summary: Resend OTP
+ *     description: Resend an OTP for registration, login, password reset, email verification, or identifier change
  *     requestBody:
  *       required: true
  *       content:
@@ -155,7 +155,6 @@ router.post('/verify-otp', authRateLimit, authController.verifyOTP);
  *             type: object
  *             required:
  *               - identifier
- *               - type
  *             properties:
  *               identifier:
  *                 type: string
@@ -163,9 +162,9 @@ router.post('/verify-otp', authRateLimit, authController.verifyOTP);
  *                 example: "user@example.com"
  *               type:
  *                 type: string
- *                 enum: [email, phone]
- *                 description: Type of verification
- *                 example: "email"
+ *                 enum: [registration, login, password_reset, email_verification, identifier_change]
+ *                 description: Purpose of the OTP
+ *                 example: "registration"
  *     responses:
  *       200:
  *         description: OTP resent successfully
@@ -173,8 +172,27 @@ router.post('/verify-otp', authRateLimit, authController.verifyOTP);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ApiResponse'
+ *             example:
+ *               success: true
+ *               message: "OTP sent successfully to your email"
+ *               data:
+ *                 identifier: "user@example.com"
+ *                 identifierType: "email"
+ *                 otpType: "registration"
  *       400:
  *         description: Bad request
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to send OTP
  *         content:
  *           application/json:
  *             schema:
