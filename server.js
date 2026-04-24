@@ -7,6 +7,7 @@ const passport = require('passport');
 const session = require('express-session');
 const os = require('os');
 const User = require('./models/User');
+const { logError, safeClone } = require('./utils/errorLogger');
 
 // Import configuration
 const { PORT, MESSAGES } = require('./config/constants');
@@ -57,6 +58,24 @@ const { specs, swaggerUi, swaggerOptions } = require('./config/swagger');
 
 // Initialize Express app
 const app = express();
+
+process.on('unhandledRejection', async (reason) => {
+  console.error('❌ Unhandled promise rejection:', reason);
+  await logError(reason, {
+    source: 'unhandledRejection',
+    metadata: {
+      reason: safeClone(reason)
+    }
+  });
+});
+
+process.on('uncaughtException', async (error) => {
+  console.error('❌ Uncaught exception:', error);
+  await logError(error, {
+    source: 'uncaughtException'
+  });
+  process.exit(1);
+});
 
 const isPlayReviewModeEnabled = () => String(process.env.PLAY_REVIEW_MODE || '').trim().toLowerCase() === 'true';
 const getPlayReviewPhone = () => String(process.env.PLAY_REVIEW_PHONE || process.env.PLAY_REVIEW_TEST_PHONE || '').replace(/\D/g, '');
@@ -148,7 +167,7 @@ const startServer = async () => {
     await ensurePlayReviewUser();
     
     // Start server
-    app.listen(PORT, HOST, () => {
+    const server = app.listen(PORT, HOST, () => {
       const hostDisplay = (HOST === '0.0.0.0' || HOST === '127.0.0.1') ? 'localhost' : HOST;
       console.log(`\n🚀 ${MESSAGES.SERVER_RUNNING} ${PORT} on ${HOST}`);
       console.log(`📋 Health check: http://${hostDisplay}:${PORT}/health`);
@@ -157,8 +176,27 @@ const startServer = async () => {
       console.log(`👤 User endpoints: http://${hostDisplay}:${PORT}/users`);
       console.log(`📖 Documentation: http://${hostDisplay}:${PORT}/api-docs\n`);
     });
+
+    server.on('error', async (error) => {
+      console.error('❌ Server error:', error);
+      await logError(error, {
+        source: 'server',
+        metadata: {
+          host: HOST,
+          port: PORT
+        }
+      });
+      process.exit(1);
+    });
   } catch (error) {
     console.error('❌ Failed to start server:', error.message);
+    await logError(error, {
+      source: 'startup',
+      metadata: {
+        host: HOST,
+        port: PORT
+      }
+    });
     process.exit(1);
   }
 };

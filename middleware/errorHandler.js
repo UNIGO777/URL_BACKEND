@@ -1,4 +1,5 @@
 const { formatLambdaResponse } = require('../utils/helpers');
+const { logError } = require('../utils/errorLogger');
 
 /**
  * Global error handling middleware
@@ -39,6 +40,19 @@ const errorHandler = (err, req, res, next) => {
     code: err.code || 'UNKNOWN_ERROR',
     details: process.env.NODE_ENV === 'development' ? err.stack : undefined
   });
+
+  void logError(err, {
+    source: 'request',
+    req,
+    statusCode,
+    metadata: {
+      responseMessage: message
+    }
+  });
+
+  if (res.headersSent) {
+    return next(err);
+  }
 
   res.status(statusCode).json(errorResponse);
 };
